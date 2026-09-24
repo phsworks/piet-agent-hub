@@ -1,0 +1,15 @@
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: piet
+      POSTGRES_PASSWORD: piet
+      POSTGRES_DB: piet_brain
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - piet_brain_db:/var/lib/postgresql/data
+
+volumes:
+  piet_brain_db:
