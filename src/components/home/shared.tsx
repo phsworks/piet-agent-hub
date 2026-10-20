@@ -5,18 +5,19 @@ import { ChevronDown } from "lucide-react";
 import { addDays, differenceInCalendarDays, format, parseISO } from "date-fns";
 import { cn } from "@/lib/utils";
 
-// Fired after anything changes reminders outside the cards (e.g. an agent proposed one in chat).
+// Fired after anything changes reminders outside the cards (e.g. the assistant made a task in chat).
 export const REMINDERS_CHANGED_EVENT = "reminders-changed";
 
+/** A TickTick task, as returned by /api/reminders. */
 export type ReminderItem = {
   id: string;
   title: string;
   notes: string | null;
-  dueDate: string | null;
-  agentId: string | null;
-  agentName: string | null;
-  status: "proposed" | "open" | "done";
-  proposedBy: string | null;
+  list: string;
+  dueDay: string | null;
+  dueTime: string | null;
+  /** Ticked off on this page; stays visible (struck through) until the next reload. */
+  done?: boolean;
 };
 
 export type CalendarEventItem = {

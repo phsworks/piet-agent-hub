@@ -14,6 +14,8 @@ import {
   type AnyPgColumn,
 } from "drizzle-orm/pg-core";
 
+// Folder tree for files (School › Semester 3 › project, Work, ...). It started
+// as a tree of chat agents; the prompt/tool columns are no longer used.
 export const agents = pgTable("agents", {
   id: uuid("id").primaryKey().defaultRandom(),
   slug: text("slug").notNull().unique(),
@@ -160,6 +162,10 @@ export const files = pgTable(
       .default("queued"),
     error: text("error"),
     summary: text("summary"),
+    // Where the file came from: "web" (dropped in the app) or "telegram".
+    source: text("source").notNull().default("web"),
+    // Piet's own words with the upload (e.g. a Telegram caption); helps filing and search.
+    note: text("note"),
     contentHash: text("content_hash"),
     // Raw bytes waiting for the worker; deleted once processed.
     tempPath: text("temp_path"),
@@ -197,30 +203,10 @@ export const fileChunks = pgTable(
   ]
 );
 
-// Quick reminders Piet types in himself, or that an agent proposed (status
-// "proposed" until Piet accepts). With a due date they show up as deadlines.
-export const reminders = pgTable(
-  "reminders",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    title: text("title").notNull(),
-    notes: text("notes"),
-    dueDate: date("due_date", { mode: "string" }),
-    // The node this reminder belongs to.
-    agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
-    status: text("status", { enum: ["proposed", "open", "done"] }).notNull().default("open"),
-    // Name of the agent that proposed it; null when Piet added it himself.
-    proposedBy: text("proposed_by"),
-    doneAt: timestamp("done_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
-      .notNull()
-      .defaultNow(),
-  },
-  (table) => [index("reminders_status_idx").on(table.status)]
-);
-
-// Events from iCal feeds (feeds themselves live in settings under "ical_feeds").
-// Each sync replaces a feed's events within the sync window.
+// Calendar events from two kinds of source:
+// - iCal feeds (feeds live in settings under "ical_feeds"), feedId = the feed's id
+// - iCloud calendars over CalDAV, feedId = "icloud:<calendar url>"
+// Each sync replaces a source's events within the sync window.
 export const calendarEvents = pgTable(
   "calendar_events",
   {
@@ -233,6 +219,11 @@ export const calendarEvents = pgTable(
     startsAt: timestamp("starts_at", { withTimezone: true }).notNull(),
     endsAt: timestamp("ends_at", { withTimezone: true }).notNull(),
     allDay: boolean("all_day").notNull().default(false),
+    // Display name of the feed or iCloud calendar ("Sport", "Rooster").
+    calendar: text("calendar"),
+    // iCloud only: the .ics resource, needed to move or delete the event.
+    href: text("href"),
+    recurring: boolean("recurring").notNull().default(false),
   },
   (table) => [
     uniqueIndex("calendar_events_feed_external_idx").on(table.feedId, table.externalId),
@@ -248,5 +239,51 @@ export const dailyBriefings = pgTable("daily_briefings", {
     .notNull()
     .defaultNow(),
 });
+
+// Coach: goals and fixed routines ("3× per week hardlopen, 's ochtends").
+// With a duration they get planned in the calendar; without one Piet ticks
+// them off in the evening check.
+export const goals = pgTable("goals", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  timesPerWeek: integer("times_per_week").notNull(),
+  durationMinutes: integer("duration_minutes"),
+  // iCloud calendar planned sessions go in.
+  calendar: text("calendar").notNull().default("Coach"),
+  // morning | afternoon | evening | any
+  preferred: text("preferred").notNull().default("any"),
+  // Lowercase words; calendar events whose title contains one count as a session.
+  match: text("match").array().notNull().default(sql`'{}'::text[]`),
+  // Preferred weekdays (1 = Monday … 7 = Sunday); empty = any day.
+  days: integer("days").array().notNull().default(sql`'{}'::integer[]`),
+  // HH:mm: on those days a "time for …?" message at this time (instead of the evening check).
+  remindAt: text("remind_at"),
+  active: boolean("active").notNull().default(true),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Every coach message with buttons (check-ins, suggestions). dedupKey makes
+// sure a suggestion is sent at most once, also across restarts. Rows with a
+// goalId + day + status done/skipped double as the log of routines ticked off.
+export const coachPrompts = pgTable(
+  "coach_prompts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    // morning | evening | weekly | goal | deadline | check
+    kind: text("kind").notNull(),
+    dedupKey: text("dedup_key").notNull(),
+    payload: jsonb("payload").notNull().default({}),
+    messageId: integer("message_id"),
+    // sent | planned | skipped | done
+    status: text("status").notNull().default("sent"),
+    goalId: uuid("goal_id").references(() => goals.id, { onDelete: "cascade" }),
+    day: date("day", { mode: "string" }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("coach_prompts_dedup_idx").on(table.dedupKey),
+    index("coach_prompts_goal_day_idx").on(table.goalId, table.day),
+  ]
+);
 
 export const vectorExtension = sql`CREATE EXTENSION IF NOT EXISTS vector`;

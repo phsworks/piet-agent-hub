@@ -1,134 +1,39 @@
 import { NextRequest } from "next/server";
-import type Anthropic from "@anthropic-ai/sdk";
-import { eq, asc } from "drizzle-orm";
-import { db } from "@/lib/db/client";
-import { conversations, messages } from "@/lib/db/schema";
-import { toolsForAgent } from "@/lib/anthropic/tools";
-import { extractMemories } from "@/lib/memory/extract";
-import { listAgents, type Agent } from "@/lib/agents/registry";
-import { runAgent, systemPromptFor, type AgentEvent } from "@/lib/agents/run";
-import { BRAIN_SLUG } from "@/lib/config";
+import { runAssistant } from "@/lib/assistant/run";
+import { addMessage, conversationExists, createConversation, recentHistory } from "@/lib/assistant/conversation";
 
 export const dynamic = "force-dynamic";
 
-// Response body is NDJSON: one AgentEvent (or {type:"error"}) per line.
+// Response body is NDJSON: {type:"tool"} while tools run, then one {type:"text"}
+// with the whole answer (or {type:"error"}).
 export async function POST(req: NextRequest) {
-  const body = (await req.json()) as {
-    conversationId?: string;
-    agentId?: string;
-    message?: string;
-  };
-  const userMessage = body.message;
-
-  if (!userMessage || typeof userMessage !== "string") {
-    return new Response("Missing message", { status: 400 });
-  }
-
-  const allAgents = await listAgents();
-  const brain = allAgents.find((a) => a.slug === BRAIN_SLUG);
-  if (!brain) {
-    return new Response("No Brain agent found. Run `npm run db:seed`.", {
-      status: 500,
-    });
-  }
+  const body = (await req.json()) as { conversationId?: string; message?: string; deep?: boolean };
+  const userMessage = body.message?.trim();
+  if (!userMessage) return new Response("Missing message", { status: 400 });
 
   let conversationId = body.conversationId;
-  let agent: Agent | undefined;
-
-  if (conversationId) {
-    const [conv] = await db
-      .select({ agentId: conversations.agentId })
-      .from(conversations)
-      .where(eq(conversations.id, conversationId));
-    if (!conv) return new Response("Conversation not found", { status: 404 });
-    agent = allAgents.find((a) => a.id === conv.agentId) ?? brain;
-  } else {
-    agent = body.agentId
-      ? allAgents.find((a) => a.id === body.agentId)
-      : brain;
-    if (!agent) return new Response("Agent not found", { status: 404 });
-
-    const [created] = await db
-      .insert(conversations)
-      .values({ agentId: agent.id, title: userMessage.slice(0, 60) })
-      .returning({ id: conversations.id });
-    conversationId = created.id;
+  if (conversationId && !(await conversationExists(conversationId))) {
+    return new Response("Conversation not found", { status: 404 });
   }
+  conversationId ??= await createConversation(userMessage);
 
-  await db.insert(messages).values({
-    conversationId,
-    role: "user",
-    content: userMessage,
-  });
-
-  const history = await db
-    .select({ role: messages.role, content: messages.content })
-    .from(messages)
-    .where(eq(messages.conversationId, conversationId))
-    .orderBy(asc(messages.createdAt));
-
-  const anthropicMessages: Anthropic.MessageParam[] = history.map((m) => ({
-    role: m.role,
-    content: m.content,
-  }));
+  await addMessage(conversationId, "user", userMessage);
+  const history = await recentHistory(conversationId);
+  const id = conversationId;
 
   const encoder = new TextEncoder();
-  const finalConversationId = conversationId;
-  const startAgent = agent;
-
   const stream = new ReadableStream({
     async start(controller) {
-      const emit = (event: AgentEvent | { type: "error"; message: string }) =>
-        controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
-
+      const emit = (event: object) => controller.enqueue(encoder.encode(JSON.stringify(event) + "\n"));
       try {
-        // Only the Brain delegates, and only one level deep.
-        const isBrain = startAgent.slug === BRAIN_SLUG;
-        const result = await runAgent({
-          system: systemPromptFor(startAgent),
-          tools: toolsForAgent(startAgent, allAgents, { allowDelegation: isBrain }),
-          messages: anthropicMessages,
-          emit,
-          source: finalConversationId,
-          agent: startAgent,
+        const result = await runAssistant({
+          messages: history,
+          deep: body.deep,
+          source: id,
+          onEvent: emit,
         });
-
-        let finalText = result.text;
-        let answeredBy = startAgent;
-
-        const target =
-          result.delegation &&
-          allAgents.find((a) => a.slug === result.delegation!.agentSlug);
-
-        if (target) {
-          emit({ type: "agent", slug: target.slug, name: target.name });
-          const handoff = await runAgent({
-            system: systemPromptFor(target, result.delegation!.note ?? ""),
-            tools: toolsForAgent(target, allAgents, { allowDelegation: false }),
-            messages: anthropicMessages,
-            emit,
-            source: finalConversationId,
-            agent: target,
-          });
-          finalText = [finalText.trim(), handoff.text].filter(Boolean).join("\n\n");
-          answeredBy = target;
-        }
-
-        await db.insert(messages).values({
-          conversationId: finalConversationId,
-          role: "assistant",
-          agentId: answeredBy.id,
-          content: finalText,
-        });
-
-        await db
-          .update(conversations)
-          .set({ updatedAt: new Date() })
-          .where(eq(conversations.id, finalConversationId));
-
-        extractMemories(userMessage, finalText, finalConversationId).catch(
-          (err) => console.error("Memory extraction failed", err)
-        );
+        await addMessage(id, "assistant", result.text);
+        emit({ type: "text", text: result.text });
       } catch (err) {
         console.error(err);
         emit({ type: "error", message: "Something went wrong. Check server logs." });
@@ -141,7 +46,7 @@ export async function POST(req: NextRequest) {
   return new Response(stream, {
     headers: {
       "Content-Type": "application/x-ndjson; charset=utf-8",
-      "X-Conversation-Id": finalConversationId,
+      "X-Conversation-Id": id,
     },
   });
 }

@@ -1,0 +1,444 @@
+import type Anthropic from "@anthropic-ai/sdk";
+import { eq } from "drizzle-orm";
+import { db } from "@/lib/db/client";
+import { agents, fileChunks, files } from "@/lib/db/schema";
+import { searchMemories, saveMemory } from "@/lib/memory/store";
+import { searchFiles } from "@/lib/files/search";
+import { extractText } from "@/lib/files/extract";
+import { searchDrive, getDriveFile, downloadDriveFile } from "@/lib/google/drive";
+import { GoogleNotConnectedError } from "@/lib/google/auth";
+import { getEvent, listEvents } from "@/lib/calendar/feeds";
+import { addDays, dayKey, timeKey, zonedDate, DAY_PATTERN, TIME_PATTERN } from "@/lib/dates";
+import { completeTask, createTask, findList, listTasks } from "@/lib/ticktick/client";
+import { TickTickNotConnectedError } from "@/lib/ticktick/auth";
+import { createICloudEvent, deleteICloudEvent, moveICloudEvent } from "@/lib/icloud/caldav";
+import { COACH_CALENDAR, SPORT_CALENDAR } from "@/lib/config";
+import { describeGoal, isDayPart, progressLine, removeGoal, saveGoal, weekProgress } from "@/lib/coach/goals";
+import { findSlots, formatSlot } from "@/lib/coach/slots";
+
+// Caps keep a single question cheap: a whole document is ~5k tokens at most.
+const READ_MAX_CHARS = 20_000;
+const PASSAGE_MAX_CHARS = 500;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Tasks without a date can pile up; the assistant only needs the first few.
+const MAX_UNDATED_TASKS = 15;
+const DEFAULT_EVENT_MINUTES = 60;
+
+export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
+  {
+    name: "search",
+    description:
+      "Search Piet's saved notes and the contents of his indexed files (school documents, feedback, notes, project code). Returns matching notes and passages with file name, folder, file id and Drive link. Use this first for 'where is…' and 'what did … say' questions.",
+    input_schema: {
+      type: "object",
+      properties: {
+        query: { type: "string", description: "What to look for, phrased like the content you expect." },
+      },
+      required: ["query"],
+    },
+  },
+  {
+    name: "drive_search",
+    description:
+      "Search all of Piet's Google Drive by file name and full text, for files that aren't indexed in search. Returns ids and links.",
+    input_schema: {
+      type: "object",
+      properties: { query: { type: "string", description: "Words to search for." } },
+      required: ["query"],
+    },
+  },
+  {
+    name: "read_document",
+    description:
+      "Read the text of one document: a file_id from search, or a Drive id from drive_search. Only read when the passages from search aren't enough to answer.",
+    input_schema: {
+      type: "object",
+      properties: { id: { type: "string" } },
+      required: ["id"],
+    },
+  },
+  {
+    name: "list_deadlines",
+    description:
+      "Piet's agenda (iCloud calendars, school timetable and other feeds) plus his open TickTick tasks, from today on. Overdue tasks are included. Times are local (Europe/Amsterdam). Events with an id can be moved or deleted.",
+    input_schema: {
+      type: "object",
+      properties: {
+        days: { type: "number", description: "How many days ahead (default 7, max 60)." },
+      },
+    },
+  },
+  {
+    name: "create_reminder",
+    description:
+      "Add a task to Piet's TickTick, which notifies his phone. Use when he asks to be reminded or mentions something he must not forget. Without a time it's an all-day task with a reminder at 9:00.",
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short and actionable, in Dutch." },
+        due_date: { type: "string", description: "YYYY-MM-DD, if there is a date." },
+        due_time: { type: "string", description: "HH:mm, if there is a time." },
+        list: { type: "string", description: "TickTick list name, e.g. School or Werk. Leave out for the inbox." },
+        notes: { type: "string" },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "complete_task",
+    description: "Tick off a TickTick task (task_id from list_deadlines).",
+    input_schema: {
+      type: "object",
+      properties: { task_id: { type: "string" } },
+      required: ["task_id"],
+    },
+  },
+  {
+    name: "create_event",
+    description: `Put something in Piet's iCloud calendar, e.g. a sport session or a block to work on a deadline. Sport goes in "${SPORT_CALENDAR}", other planning in "${COACH_CALENDAR}" (the default). Only plan things Piet asked for or agreed to; check list_deadlines first for clashes.`,
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "In Dutch." },
+        date: { type: "string", description: "YYYY-MM-DD" },
+        start_time: { type: "string", description: "HH:mm. Leave out for an all-day event." },
+        end_time: { type: "string", description: `HH:mm. Default: ${DEFAULT_EVENT_MINUTES} minutes after the start.` },
+        calendar: { type: "string", description: `"${COACH_CALENDAR}" (default), "${SPORT_CALENDAR}", or another of his calendars.` },
+        location: { type: "string" },
+        notes: { type: "string" },
+      },
+      required: ["title", "date"],
+    },
+  },
+  {
+    name: "move_event",
+    description: "Move an event (event_id from list_deadlines) to another date and/or time; its duration stays the same.",
+    input_schema: {
+      type: "object",
+      properties: {
+        event_id: { type: "string" },
+        date: { type: "string", description: "YYYY-MM-DD" },
+        start_time: { type: "string", description: "HH:mm. Leave out to keep the current time." },
+      },
+      required: ["event_id", "date"],
+    },
+  },
+  {
+    name: "delete_event",
+    description: "Delete an event (event_id from list_deadlines). Only when Piet explicitly asks for it.",
+    input_schema: {
+      type: "object",
+      properties: { event_id: { type: "string" } },
+      required: ["event_id"],
+    },
+  },
+  {
+    name: "list_goals",
+    description: "Piet's goals and fixed routines (e.g. hardlopen 2× per week) with this week's progress.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "set_goal",
+    description: `Create or update a goal/routine the coach keeps track of (same title = update). With duration_minutes the coach finds free time and suggests planning it in the calendar; without it Piet ticks it off in the evening check (e.g. "dagelijks 20 min Duolingo" can be either; ask if unclear). Sport goes in "${SPORT_CALENDAR}", the rest in "${COACH_CALENDAR}".`,
+    input_schema: {
+      type: "object",
+      properties: {
+        title: { type: "string", description: "Short, in Dutch, e.g. Hardlopen, Gym, Duolingo." },
+        times_per_week: { type: "number", description: "1-7 (7 = daily)." },
+        duration_minutes: { type: "number", description: "Length of a session, if it needs calendar time." },
+        preferred: { type: "string", enum: ["morning", "afternoon", "evening", "any"] },
+        calendar: { type: "string" },
+        days: {
+          type: "array",
+          items: { type: "number" },
+          description: "Preferred weekdays, 1 = Monday … 7 = Sunday (e.g. [1,2] for Monday and Tuesday).",
+        },
+        remind_at: {
+          type: "string",
+          description: "HH:mm. For routines without calendar time: a 'time for…?' message at this time on those days, plus an occasional tip on other free evenings.",
+        },
+        match: {
+          type: "array",
+          items: { type: "string" },
+          description: "Extra words; calendar events containing one count as a session (e.g. workout, fitness for Gym).",
+        },
+      },
+      required: ["title"],
+    },
+  },
+  {
+    name: "remove_goal",
+    description: "Stop tracking a goal/routine (by title). Only when Piet asks.",
+    input_schema: { type: "object", properties: { title: { type: "string" } }, required: ["title"] },
+  },
+  {
+    name: "find_free_time",
+    description: "Free slots in Piet's calendar for something of a given length, found by code (respects his events with a margin). Use before proposing when to plan something.",
+    input_schema: {
+      type: "object",
+      properties: {
+        duration_minutes: { type: "number" },
+        from_date: { type: "string", description: "YYYY-MM-DD, default today." },
+        days: { type: "number", description: "How many days to search (default 7)." },
+        preferred: { type: "string", enum: ["morning", "afternoon", "evening", "any"] },
+      },
+      required: ["duration_minutes"],
+    },
+  },
+  {
+    name: "save_note",
+    description:
+      "Save a note or fact so Piet can find it later (e.g. 'onthoud dat…', a locker code, a decision, an idea). Similar existing notes are updated instead of duplicated.",
+    input_schema: {
+      type: "object",
+      properties: {
+        content: { type: "string", description: "The note as a standalone statement, in Piet's language." },
+      },
+      required: ["content"],
+    },
+  },
+];
+
+export const TOOL_LABELS: Record<string, string> = {
+  search: "Zoeken…",
+  drive_search: "Zoeken in Drive…",
+  read_document: "Document lezen…",
+  list_deadlines: "Agenda bekijken…",
+  create_reminder: "Taak maken…",
+  complete_task: "Afvinken…",
+  create_event: "Inplannen…",
+  move_event: "Verplaatsen…",
+  delete_event: "Verwijderen…",
+  save_note: "Opslaan…",
+  list_goals: "Doelen bekijken…",
+  set_goal: "Doel opslaan…",
+  remove_goal: "Doel verwijderen…",
+  find_free_time: "Vrije tijd zoeken…",
+};
+
+export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
+  try {
+    return await runTool(name, input, source);
+  } catch (err) {
+    if (err instanceof GoogleNotConnectedError) {
+      return { error: "Google Drive isn't connected. Piet can connect it in Settings." };
+    }
+    if (err instanceof TickTickNotConnectedError) return { error: err.message };
+    console.error(`Tool ${name} failed`, err);
+    return { error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
+async function runTool(name: string, input: Record<string, unknown>, source: string) {
+  switch (name) {
+    case "search": {
+      const query = String(input.query ?? "");
+      const [notes, passages] = await Promise.all([
+        searchMemories(query, 5),
+        searchFiles(query, { limit: 6 }),
+      ]);
+      return {
+        notes: notes.filter((n) => n.similarity > 0.3).map((n) => n.content),
+        passages: passages.map((p) => ({
+          file_id: p.fileId,
+          file: p.path ? `${p.file} › ${p.path}` : p.file,
+          folder: p.agent,
+          link: p.driveUrl,
+          text: p.content.slice(0, PASSAGE_MAX_CHARS),
+        })),
+      };
+    }
+    case "drive_search": {
+      const results = await searchDrive(String(input.query ?? ""), 8);
+      return { results: results.map((r) => ({ id: r.id, name: r.name, link: r.webViewLink, modified: r.modifiedTime })) };
+    }
+    case "read_document":
+      return readDocument(String(input.id ?? ""));
+    case "list_deadlines": {
+      const days = Math.min(Math.max(Number(input.days) || 7, 1), 60);
+      const now = new Date();
+      const until = new Date(now.getTime() + days * 86_400_000);
+      const today = dayKey(now);
+      const lastDay = dayKey(until);
+      const [events, tasks] = await Promise.all([
+        listEvents(now, until),
+        // The agenda still answers when TickTick isn't connected.
+        listTasks().catch((err: Error) => err),
+      ]);
+      const taskList = tasks instanceof Error ? [] : tasks;
+      const undated = taskList.filter((t) => !t.dueDay);
+      return {
+        today,
+        events: events.map((e) => ({
+          id: e.editable ? e.id : undefined,
+          title: e.title,
+          calendar: e.feed ?? undefined,
+          start: e.allDay ? dayKey(new Date(e.startsAt)) : localStamp(new Date(e.startsAt)),
+          end: e.allDay ? undefined : timeKey(new Date(e.endsAt)),
+          all_day: e.allDay || undefined,
+          recurring: e.recurring || undefined,
+          location: e.location ?? undefined,
+        })),
+        tasks: taskList
+          .filter((t) => t.dueDay && t.dueDay <= lastDay)
+          .map((t) => ({
+            id: t.id,
+            title: t.title,
+            list: t.list,
+            due: t.dueTime ? `${t.dueDay} ${t.dueTime}` : t.dueDay,
+            overdue: t.dueDay! < today || undefined,
+            notes: t.notes?.slice(0, 200) ?? undefined,
+          })),
+        undated_tasks: undated.slice(0, MAX_UNDATED_TASKS).map((t) => ({ id: t.id, title: t.title, list: t.list })),
+        more_undated: undated.length > MAX_UNDATED_TASKS ? undated.length - MAX_UNDATED_TASKS : undefined,
+        tasks_error: tasks instanceof Error ? tasks.message : undefined,
+      };
+    }
+    case "create_reminder": {
+      const dueDay = input.due_date ? String(input.due_date) : null;
+      const dueTime = input.due_time ? String(input.due_time) : null;
+      if (dueDay && !DAY_PATTERN.test(dueDay)) return { error: "due_date must be YYYY-MM-DD" };
+      if (dueTime && !TIME_PATTERN.test(dueTime)) return { error: "due_time must be HH:mm" };
+      if (dueTime && !dueDay) return { error: "due_time needs a due_date" };
+      let listId: string | null = null;
+      if (input.list) {
+        const list = await findList(String(input.list));
+        if ("missing" in list) return { error: `No list "${input.list}". Lists: ${list.lists.map((l) => l.name).join(", ")}` };
+        listId = list.id;
+      }
+      const task = await createTask({
+        title: String(input.title ?? ""),
+        notes: input.notes ? String(input.notes) : null,
+        dueDay,
+        dueTime,
+        listId,
+      });
+      return { created: true, title: task.title, list: task.list, due: task.dueTime ? `${task.dueDay} ${task.dueTime}` : task.dueDay };
+    }
+    case "complete_task":
+      await completeTask(String(input.task_id ?? ""));
+      return { done: true };
+    case "create_event": {
+      const date = String(input.date ?? "");
+      const startTime = input.start_time ? String(input.start_time) : null;
+      const endTime = input.end_time ? String(input.end_time) : null;
+      if (!DAY_PATTERN.test(date)) return { error: "date must be YYYY-MM-DD" };
+      if ((startTime && !TIME_PATTERN.test(startTime)) || (endTime && !TIME_PATTERN.test(endTime))) {
+        return { error: "times must be HH:mm" };
+      }
+      const start = zonedDate(date, startTime ?? "00:00");
+      let end = endTime ? zonedDate(date, endTime) : new Date(start.getTime() + DEFAULT_EVENT_MINUTES * 60_000);
+      if (end <= start) end = new Date(end.getTime() + 86_400_000); // ends after midnight
+      const result = await createICloudEvent({
+        calendar: input.calendar ? String(input.calendar) : COACH_CALENDAR,
+        title: String(input.title ?? ""),
+        start,
+        end,
+        allDayRange: startTime ? undefined : { first: date, afterLast: addDays(date, 1) },
+        location: input.location ? String(input.location) : null,
+        notes: input.notes ? String(input.notes) : null,
+        alarmMinutes: startTime ? 15 : null,
+      });
+      return { created: true, calendar: result.calendar, when: startTime ? `${date} ${startTime}–${timeKey(end)}` : date };
+    }
+    case "move_event": {
+      const date = String(input.date ?? "");
+      const startTime = input.start_time ? String(input.start_time) : null;
+      if (!DAY_PATTERN.test(date)) return { error: "date must be YYYY-MM-DD" };
+      if (startTime && !TIME_PATTERN.test(startTime)) return { error: "start_time must be HH:mm" };
+      const current = UUID.test(String(input.event_id)) ? await getEvent(String(input.event_id)) : null;
+      if (!current) return { error: "No event with that id; call list_deadlines again." };
+      const oldStart = new Date(current.startsAt);
+      const duration = new Date(current.endsAt).getTime() - oldStart.getTime();
+      const start = zonedDate(date, startTime ?? (current.allDay ? "00:00" : timeKey(oldStart)));
+      const result = await moveICloudEvent(current.id, start, new Date(start.getTime() + duration));
+      return { moved: true, title: result.title, to: current.allDay ? date : localStamp(start) };
+    }
+    case "delete_event": {
+      const result = await deleteICloudEvent(String(input.event_id ?? ""));
+      return { deleted: true, title: result.title, calendar: result.calendar };
+    }
+    case "list_goals": {
+      const progress = await weekProgress();
+      return {
+        goals: progress.map((p) => ({ setting: describeGoal(p.goal), this_week: progressLine(p), still_to_plan: p.remaining })),
+      };
+    }
+    case "set_goal": {
+      const times = input.times_per_week === undefined ? undefined : Math.round(Number(input.times_per_week));
+      if (times !== undefined && !(times >= 1 && times <= 7)) return { error: "times_per_week must be 1-7" };
+      const duration = input.duration_minutes === undefined ? undefined : Math.round(Number(input.duration_minutes)) || null;
+      if (input.preferred !== undefined && !isDayPart(input.preferred)) return { error: "preferred must be morning, afternoon, evening or any" };
+      const { goal, action } = await saveGoal({
+        title: String(input.title ?? ""),
+        timesPerWeek: times,
+        durationMinutes: duration,
+        preferred: isDayPart(input.preferred) ? input.preferred : undefined,
+        calendar: input.calendar ? String(input.calendar) : undefined,
+        match: Array.isArray(input.match) ? input.match.map(String) : undefined,
+        days: Array.isArray(input.days) ? input.days.map(Number).filter((d) => d >= 1 && d <= 7) : undefined,
+        remindAt: input.remind_at === undefined ? undefined : TIME_PATTERN.test(String(input.remind_at)) ? String(input.remind_at) : null,
+      });
+      return { saved: action, goal: describeGoal(goal) };
+    }
+    case "remove_goal": {
+      const goal = await removeGoal(String(input.title ?? ""));
+      return goal ? { removed: goal.title } : { error: "No goal with that title; see list_goals." };
+    }
+    case "find_free_time": {
+      const fromDay = input.from_date ? String(input.from_date) : dayKey();
+      if (!DAY_PATTERN.test(fromDay)) return { error: "from_date must be YYYY-MM-DD" };
+      const slots = await findSlots({
+        fromDay,
+        days: Math.min(Math.max(Number(input.days) || 7, 1), 21),
+        durationMinutes: Math.max(Number(input.duration_minutes) || DEFAULT_EVENT_MINUTES, 15),
+        preferred: isDayPart(input.preferred) ? input.preferred : "any",
+      });
+      return { slots: slots.map((s) => ({ date: dayKey(new Date(s.start)), start: timeKey(new Date(s.start)), end: timeKey(new Date(s.end)), label: formatSlot(s) })) };
+    }
+    case "save_note": {
+      const result = await saveMemory({ content: String(input.content ?? ""), category: "note", source });
+      return { saved: true, action: result.action };
+    }
+    default:
+      return { error: `Unknown tool: ${name}` };
+  }
+}
+
+async function readDocument(id: string) {
+  // An id from search points at our own index; anything else is a Drive id.
+  if (UUID.test(id)) {
+    const [file] = await db
+      .select({ name: files.name, kind: files.kind, driveFileId: files.driveFileId, driveUrl: files.driveUrl, folder: agents.name })
+      .from(files)
+      .leftJoin(agents, eq(agents.id, files.agentId))
+      .where(eq(files.id, id));
+    if (!file) return { error: "No file with that id." };
+    // The indexed text is already here: no Drive download, and no second
+    // (paid) image description for photos.
+    const chunks = await db
+      .select({ path: fileChunks.path, content: fileChunks.content })
+      .from(fileChunks)
+      .where(eq(fileChunks.fileId, id))
+      .orderBy(fileChunks.chunkIndex);
+    if (chunks.length > 0 || !file.driveFileId) {
+      const text = chunks.map((c) => (c.path ? `--- ${c.path}\n${c.content}` : c.content)).join("\n\n");
+      return { name: file.name, folder: file.folder, link: file.driveUrl, ...capped(text) };
+    }
+    id = file.driveFileId;
+  }
+
+  const meta = await getDriveFile(id);
+  const download = await downloadDriveFile(meta);
+  const text = download ? await extractText(download.buffer, download.name) : null;
+  if (!text) return { name: meta.name, link: meta.webViewLink, text: null, note: "No readable text in this file." };
+  return { name: meta.name, link: meta.webViewLink, ...capped(text) };
+}
+
+function localStamp(date: Date) {
+  return `${dayKey(date)} ${timeKey(date)}`;
+}
+
+function capped(text: string) {
+  return { text: text.slice(0, READ_MAX_CHARS), truncated: text.length > READ_MAX_CHARS || undefined };
+}

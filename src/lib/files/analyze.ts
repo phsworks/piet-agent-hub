@@ -18,6 +18,8 @@ export async function analyzeFile(opts: {
   name: string;
   path: string | null;
   text: string | null;
+  /** Piet's own words with the upload (e.g. a Telegram caption). */
+  note?: string | null;
   allAgents: Agent[];
   fixedAgent?: Agent;
   fixedSection?: string | null;
@@ -29,7 +31,7 @@ export async function analyzeFile(opts: {
   const mayBeProject = needsAgent ? allAgents.some((a) => a.kind === "project") : fixedAgent.kind === "project";
   const needsSection = mayBeProject && !opts.fixedSection;
 
-  if (!opts.text && !needsAgent && !needsSection) {
+  if (!opts.text && !opts.note && !needsAgent && !needsSection) {
     return { agentId: fixedAgent!.id, section: opts.fixedSection ?? null, summary: null };
   }
 
@@ -91,7 +93,7 @@ export async function analyzeFile(opts: {
     messages: [
       {
         role: "user",
-        content: `File name: ${opts.name}${opts.path ? `\nPath in upload: ${opts.path}` : ""}\n\nContent:\n${excerpt}`,
+        content: `File name: ${opts.name}${opts.path ? `\nPath in upload: ${opts.path}` : ""}${opts.note ? `\nPiet's note: ${opts.note}` : ""}\n\nContent:\n${excerpt}`,
       },
     ],
   });

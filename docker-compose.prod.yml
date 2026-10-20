@@ -1,0 +1,36 @@
+# The VPS setup: `docker compose -f docker-compose.prod.yml up -d --build`
+# (scripts/deploy.sh does this). Secrets come from .env.production on the VPS.
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      POSTGRES_USER: piet
+      POSTGRES_DB: piet_brain
+    volumes:
+      - piet_brain_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U piet -d piet_brain"]
+      interval: 5s
+      retries: 20
+    logging: &logging
+      driver: json-file
+      options: { max-size: "10m", max-file: "3" }
+
+  app:
+    build: .
+    restart: unless-stopped
+    env_file: .env.production
+    environment:
+      BACKUP_TO_DRIVE: "true"
+    depends_on:
+      db:
+        condition: service_healthy
+    # Only reachable on the VPS itself; `tailscale serve` puts it on the tailnet with HTTPS.
+    ports:
+      - "127.0.0.1:3210:3210"
+    logging: *logging
+
+volumes:
+  piet_brain_db:

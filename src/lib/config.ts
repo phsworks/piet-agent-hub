@@ -1,18 +1,14 @@
-export const MODEL_NAME = "claude-sonnet-5";
-
-// Shared context prepended to every agent's own system_prompt (from the agents table).
-export const AGENT_BASE_PROMPT = `You are part of Piet's Brain, Piet's personal multi-agent assistant. Piet is a third-semester HBO-ICT student (HvA) working as an AI developer with several side projects. At school he works in semesters, each built around one big project.
-
-You have a persistent memory of durable facts about Piet (his semesters, projects, preferences, deadlines, goals). Use memory_search whenever recalling something about Piet could help you answer well. Use memory_save to store new durable facts you learn — not small talk, only things worth remembering long-term.
-
-Be direct, concise, and practical. This is a personal tool for one user, not a product.`;
+// The assistant answers on Haiku by default; "/diep" (Telegram) or the Deep
+// toggle (web) switches one message to Sonnet.
+export const ASSISTANT_MODEL = "claude-haiku-5-5";
+export const DEEP_MODEL = "claude-sonnet-5-5";
 
 export const BRAIN_SLUG = "brain";
 
 export const MEMORY_SIMILARITY_THRESHOLD = 0.85;
 
 // Cheaper model for bulk background work: classifying and summarizing files.
-export const FAST_MODEL_NAME = "claude-haiku-4-5-20251001";
+export const FAST_MODEL_NAME = "claude-haiku-5-5";
 
 // Language for generated content Piet reads (summaries, overviews).
 export const CONTENT_LANGUAGE = "Dutch";
@@ -34,9 +30,41 @@ export const DRIVE_ROOT_FOLDER = "PietBrain";
 // Piet's timezone: decides what "today" is for reminders, the calendar and the daily briefing.
 export const TIMEZONE = "Europe/Amsterdam";
 
-// When the Brain writes the daily briefing (cron, in TIMEZONE). If the app was
-// off at that time, it's written on startup or when the home screen asks for it.
-export const BRIEFING_CRON = "30 6 * * *";
-
 // How often iCal feeds (school schedule) are re-fetched.
 export const CALENDAR_SYNC_HOURS = 3;
+
+// How many earlier messages of a conversation the assistant sees. Short on
+// purpose: every message is resent with each question.
+export const ASSISTANT_HISTORY_MESSAGES = 8;
+
+// iCloud calendar the assistant plans things in (created on first use); sport goes to SPORT_CALENDAR.
+export const COACH_CALENDAR = "Coach";
+export const SPORT_CALENDAR = "Sport";
+// How often iCloud calendars are checked for changes (cheap: unchanged calendars are skipped).
+export const ICLOUD_SYNC_MINUTES = 15;
+
+// Coach (local times). Check-ins are sent once per day; if the Mac was asleep
+// at the time, they still go out as long as the window hasn't closed.
+export const COACH = {
+  morning: { from: "07:30", until: "11:00" },
+  evening: { from: "21:00", until: "23:00" },
+  // Sunday.
+  weekly: { from: "19:00", until: "22:00" },
+  // No suggestions outside these hours, and at most this many per day.
+  nudgeHours: { from: "08:00", until: "21:30" },
+  maxNudgesPerDay: 2,
+  // A TickTick task due within this many days without a work block gets one suggested.
+  deadlineDays: 3,
+  // Lists whose tasks are small errands: no work block suggestions.
+  noBlockLists: ["Dagelijkse reminders"],
+  // Margin around existing events when looking for free time.
+  bufferMinutes: 15,
+} as const;
+
+// When a goal "prefers" a part of the day, slots are searched in these windows.
+export const DAY_PARTS = {
+  morning: { from: "07:00", until: "11:00" },
+  afternoon: { from: "12:00", until: "17:30" },
+  evening: { from: "18:00", until: "22:00" },
+  any: { from: "08:00", until: "21:30" },
+} as const;

@@ -29,6 +29,34 @@
       "when": 1790180662011,
       "tag": "0003_empty_master_mold",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1792506676056,
+      "tag": "0004_acoustic_marvel_boy",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1792516590375,
+      "tag": "0005_lying_retro_girl",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1792524175570,
+      "tag": "0006_fast_slyde",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1792524756061,
+      "tag": "0007_clean_ted_forrester",
+      "breakpoints": true
     }
   ]
 }

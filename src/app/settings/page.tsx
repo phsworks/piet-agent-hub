@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CalendarFeeds } from "@/components/settings/calendar-feeds";
+import { ICloudCard, TickTickCard } from "@/components/settings/integrations";
 
 type GoogleStatus = {
   configured: boolean;
@@ -30,12 +31,16 @@ export default function SettingsPage() {
         if (!ignore) setGoogle(data);
       });
 
-    // Result of the OAuth round trip, passed back by /api/google/callback.
+    // Result of an OAuth round trip, passed back by /api/google/callback or /api/ticktick/callback.
     const params = new URLSearchParams(window.location.search);
-    const result = params.get("google");
-    if (result) {
-      if (result === "connected") toast.success("Google connected");
-      else toast.error(`Google connect failed: ${result}`);
+    for (const [key, label] of [
+      ["google", "Google"],
+      ["ticktick", "TickTick"],
+    ]) {
+      const result = params.get(key);
+      if (!result) continue;
+      if (result === "connected") toast.success(`${label} connected`);
+      else toast.error(`${label} connect failed: ${result}`);
       window.history.replaceState(null, "", "/settings");
     }
     return () => {
@@ -60,9 +65,8 @@ export default function SettingsPage() {
             {google?.connected && <Badge variant="secondary">Connected</Badge>}
           </CardTitle>
           <CardDescription>
-            Read access to all of your Drive, so agents can search and read your files. The app only
-            writes inside its own <code>/PietBrain</code> folder. Calendar access is requested now for
-            the calendar module later.
+            Read access to all of your Drive, so the assistant can search and read your files. The app
+            only writes inside its own <code>/PietBrain</code> folder.
           </CardDescription>
         </CardHeader>
         <CardContent className="text-sm">
@@ -97,6 +101,8 @@ export default function SettingsPage() {
         )}
       </Card>
 
+      <TickTickCard />
+      <ICloudCard />
       <CalendarFeeds />
     </div>
   );

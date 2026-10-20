@@ -143,6 +143,34 @@ export async function uploadToDrive(opts: {
   return toDriveFile(res.data);
 }
 
+/** A folder directly under /PietBrain (e.g. "Backups"), created on first use. */
+export async function ensureRootSubfolder(name: string) {
+  const drive = await getDrive();
+  const key = `drive_subfolder:${name}`;
+  const cached = await getSetting<string>(key);
+  if (cached && (await folderExists(drive, cached))) return cached;
+  const id = await createFolder(drive, name, await ensureRootFolder(drive));
+  await setSetting(key, id);
+  return id;
+}
+
+/** Files directly in a folder, newest first. */
+export async function listFolderFiles(folderId: string) {
+  const drive = await getDrive();
+  const res = await drive.files.list({
+    q: `'${escapeQuery(folderId)}' in parents and trashed = false`,
+    fields: `files(${FILE_FIELDS})`,
+    orderBy: "createdTime desc",
+    pageSize: 100,
+  });
+  return (res.data.files ?? []).map(toDriveFile);
+}
+
+export async function trashDriveFile(fileId: string) {
+  const drive = await getDrive();
+  await drive.files.update({ fileId, requestBody: { trashed: true } });
+}
+
 /** Creates a Google Doc from plain text (used by agents to write notes). */
 export async function createGoogleDoc(opts: {
   name: string;

@@ -4,7 +4,6 @@ import Link from "next/link";
 import { format, parseISO } from "date-fns";
 import { CalendarDays } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { branchColor, type AgentNode } from "@/components/constellation/types";
 import { FloatingCard, dayLabel, dueInfo, type CalendarEventItem, type ReminderItem } from "./shared";
 
 function groupByDay(events: CalendarEventItem[]) {
@@ -26,17 +25,13 @@ export function AgendaCard({
   events,
   eventsLoaded,
   deadlines,
-  agents,
-  onSelectAgent,
 }: {
   events: CalendarEventItem[];
   eventsLoaded: boolean;
   deadlines: ReminderItem[];
-  agents: AgentNode[];
-  onSelectAgent: (agent: AgentNode) => void;
 }) {
   const days = groupByDay(events);
-  const overdue = deadlines.filter((d) => d.dueDate && dueInfo(d.dueDate).overdue).length;
+  const overdue = deadlines.filter((d) => d.dueDay && dueInfo(d.dueDay).overdue).length;
 
   return (
     <FloatingCard
@@ -69,6 +64,7 @@ export function AgendaCard({
                   <div className="text-xs font-medium leading-snug line-clamp-2">{e.title}</div>
                   <div className="text-[11px] text-muted-foreground truncate">
                     {eventTime(e)}
+                    {e.feed && ` · ${e.feed}`}
                     {e.location && ` · ${e.location}`}
                   </div>
                 </div>
@@ -82,8 +78,7 @@ export function AgendaCard({
           <ul className="flex flex-col gap-1.5 max-h-[16.5rem] overflow-y-auto">
             {deadlines.length === 0 && <li className="text-xs text-muted-foreground">No deadlines 🎉</li>}
             {deadlines.map((d) => {
-              const due = dueInfo(d.dueDate!);
-              const agent = agents.find((a) => a.id === d.agentId);
+              const due = dueInfo(d.dueDay!);
               return (
                 <li key={d.id} className="flex flex-col">
                   <span className="text-xs leading-snug line-clamp-2" title={d.notes ?? d.title}>
@@ -98,17 +93,9 @@ export function AgendaCard({
                       )}
                     >
                       {due.label}
+                      {d.dueTime && ` ${d.dueTime}`}
                     </span>
-                    {agent && (
-                      <button
-                        type="button"
-                        onClick={() => onSelectAgent(agent)}
-                        className="flex items-center gap-1 min-w-0 text-muted-foreground hover:text-foreground"
-                      >
-                        <span className="size-1.5 rounded-full shrink-0" style={{ background: branchColor(agent.branch) }} />
-                        <span className="truncate">{agent.name}</span>
-                      </button>
-                    )}
+                    {d.list !== "Inbox" && <span className="truncate text-muted-foreground">{d.list}</span>}
                   </span>
                 </li>
               );

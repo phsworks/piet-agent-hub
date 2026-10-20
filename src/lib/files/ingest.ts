@@ -14,7 +14,12 @@ const MAX_ZIP_DEPTH = 2;
 
 export type IngestResult = { queued: number; duplicates: number; skipped: number };
 
-type Target = { agentId?: string | null; section?: string | null };
+type Target = {
+  agentId?: string | null;
+  section?: string | null;
+  source?: "web" | "telegram";
+  note?: string | null;
+};
 
 async function writeTemp(buffer: Buffer | string) {
   await mkdir(TEMP_DIR, { recursive: true });
@@ -57,6 +62,8 @@ export async function enqueueUpload(
           path: `${zipBase}/${entryPath}`,
           agentId: input.agentId,
           section: input.section,
+          source: input.source,
+          note: input.note,
         },
         depth + 1
       );
@@ -86,6 +93,8 @@ export async function enqueueUpload(
     kind: "upload",
     agentId: input.agentId ?? null,
     section: input.section ?? null,
+    source: input.source ?? "web",
+    note: input.note ?? null,
     name: input.name,
     path: input.path ?? null,
     mimeType: input.mimeType || null,

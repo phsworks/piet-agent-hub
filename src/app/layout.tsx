@@ -6,7 +6,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { UploadProvider } from "@/components/uploads/upload-provider";
 
 const NAV = [
-  { href: "/", label: "Constellation" },
+  { href: "/", label: "Home" },
   { href: "/files", label: "Files" },
   { href: "/memories", label: "Memories" },
   { href: "/settings", label: "Settings" },
@@ -24,7 +24,9 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Piet's Brain",
-  description: "Personal multi-agent assistant",
+  description: "Personal automation hub",
+  // "Add to Home Screen" on iOS then opens it full-screen, like an app.
+  appleWebApp: { capable: true, title: "Piet's Brain" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {

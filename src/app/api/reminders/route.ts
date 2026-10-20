@@ -1,30 +1,29 @@
-import { createReminder, listReminders, DUE_DATE_PATTERN } from "@/lib/reminders/store";
+import { createTask, listTasks } from "@/lib/ticktick/client";
+import { TickTickNotConnectedError } from "@/lib/ticktick/auth";
+import { parseQuickTask } from "@/lib/telegram/quick";
+import { DAY_PATTERN } from "@/lib/dates";
 
 export const dynamic = "force-dynamic";
 
-// Ticked-off reminders stay visible (struck through) for a while.
-const KEEP_DONE_MS = 12 * 3_600_000;
-
+// Reminders are TickTick tasks now; this route just proxies them for the home page.
 export async function GET() {
-  return Response.json(await listReminders({ doneSince: new Date(Date.now() - KEEP_DONE_MS) }));
+  try {
+    const tasks = await listTasks();
+    return Response.json({ connected: true, tasks });
+  } catch (err) {
+    if (err instanceof TickTickNotConnectedError) return Response.json({ connected: false, tasks: [], error: err.message });
+    throw err;
+  }
 }
 
 export async function POST(req: Request) {
-  const body = (await req.json()) as {
-    title?: string;
-    notes?: string;
-    dueDate?: string | null;
-    agentId?: string | null;
-  };
+  const body = (await req.json()) as { title?: string; dueDate?: string | null };
   if (!body.title?.trim()) return new Response("Title is required", { status: 400 });
-  if (body.dueDate && !DUE_DATE_PATTERN.test(body.dueDate)) {
+  if (body.dueDate && !DAY_PATTERN.test(body.dueDate)) {
     return new Response("Due date must be YYYY-MM-DD", { status: 400 });
   }
-  const row = await createReminder({
-    title: body.title,
-    notes: body.notes,
-    dueDate: body.dueDate,
-    agentId: body.agentId,
-  });
-  return Response.json(row);
+  // Without a picked date, "morgen 9:00 mail docent" works like /t in Telegram.
+  const parsed = body.dueDate ? { title: body.title, dueDay: body.dueDate, dueTime: null } : parseQuickTask(body.title);
+  return Response.json(await createTask(parsed));
 }
+

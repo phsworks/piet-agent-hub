@@ -47,7 +47,9 @@ async function describeImage(
 ) {
   const response = await anthropic.messages.create({
     model: FAST_MODEL_NAME,
-    max_tokens: 1024,
+    // Room for (light) thinking before the transcription.
+    max_tokens: 2048,
+    output_config: { effort: "low" },
     messages: [
       {
         role: "user",

@@ -1,7 +1,7 @@
 import { readFile, unlink } from "node:fs/promises";
 import { eq, sql } from "drizzle-orm";
 import { db } from "@/lib/db/client";
-import { files, fileChunks } from "@/lib/db/schema";
+import { agents, files, fileChunks } from "@/lib/db/schema";
 import { listAgents } from "@/lib/agents/registry";
 import { ensureAgentFolder, uploadToDrive, getDriveFile, downloadDriveFile } from "@/lib/google/drive";
 import { embedMany } from "@/lib/memory/embed";
@@ -9,26 +9,16 @@ import { extractText } from "./extract";
 import { analyzeFile } from "./analyze";
 import { chunkText } from "./chunk";
 import { processCodeSnapshot } from "./code";
-import { generateOverview } from "@/lib/agents/overview";
+import { notifyOwner } from "@/lib/telegram/api";
 
 type FileRow = typeof files.$inferSelect;
 
 const CONCURRENCY = 2;
-// Wait a bit after the queue drains before refreshing overviews, so a batch
-// of uploads triggers one refresh per node instead of one per file.
-const OVERVIEW_DEBOUNCE_MS = 5_000;
 
 // Survives dev hot reloads, so there is only ever one worker loop.
-const state = ((globalThis as unknown as { __fileWorker?: WorkerState }).__fileWorker ??= {
+const state = ((globalThis as unknown as { __fileWorker?: { running: number } }).__fileWorker ??= {
   running: 0,
-  dirtyAgents: new Set<string>(),
-  overviewTimer: undefined,
 });
-type WorkerState = {
-  running: number;
-  dirtyAgents: Set<string>;
-  overviewTimer: ReturnType<typeof setTimeout> | undefined;
-};
 
 /** Called on server start: resumes work interrupted by a restart. */
 export async function startWorker() {
@@ -41,7 +31,6 @@ export function kickWorker() {
     state.running++;
     runLoop().finally(() => {
       state.running--;
-      if (state.running === 0) scheduleOverviews();
     });
   }
 }
@@ -66,10 +55,9 @@ async function runLoop() {
       await processFile(file);
     } catch (err) {
       console.error(`Processing ${file.name} failed`, err);
-      await db
-        .update(files)
-        .set({ status: "failed", error: err instanceof Error ? err.message : String(err) })
-        .where(eq(files.id, file.id));
+      const error = err instanceof Error ? err.message : String(err);
+      await db.update(files).set({ status: "failed", error }).where(eq(files.id, file.id));
+      if (file.source === "telegram") await notifyOwner(`⚠️ ${file.name} verwerken mislukt: ${error}`);
     }
   }
 }
@@ -81,9 +69,21 @@ async function processFile(file: FileRow) {
     await processDocument(file);
   }
   if (file.tempPath) await unlink(file.tempPath).catch(() => {});
+  if (file.source === "telegram") await notifyFiled(file.id);
+}
 
-  const [done] = await db.select({ agentId: files.agentId }).from(files).where(eq(files.id, file.id));
-  if (done?.agentId) state.dirtyAgents.add(done.agentId);
+/** Tells Piet on Telegram where a file he sent ended up. */
+async function notifyFiled(fileId: string) {
+  const [row] = await db
+    .select({ name: files.name, summary: files.summary, driveUrl: files.driveUrl, folder: agents.name })
+    .from(files)
+    .leftJoin(agents, eq(agents.id, files.agentId))
+    .where(eq(files.id, fileId));
+  if (!row) return;
+  const lines = [`✓ ${row.name} opgeslagen${row.folder ? ` in ${row.folder}` : ""}`];
+  if (row.summary) lines.push("", row.summary);
+  if (row.driveUrl) lines.push("", row.driveUrl);
+  await notifyOwner(lines.join("\n"));
 }
 
 async function processDocument(file: FileRow) {
@@ -109,6 +109,7 @@ async function processDocument(file: FileRow) {
     name: file.name,
     path: file.path,
     text,
+    note: file.note,
     allAgents,
     fixedAgent,
     fixedSection: file.section,
@@ -137,9 +138,11 @@ async function processDocument(file: FileRow) {
     await db.update(files).set(updates).where(eq(files.id, file.id));
   }
 
+  // Piet's caption is searchable too, also for photos without readable text.
+  const searchable = [file.note && `Notitie van Piet: ${file.note}`, text].filter(Boolean).join("\n\n");
   await replaceChunks(
     file.id,
-    text ? chunkText(text).map((content) => ({ content, path: null })) : [],
+    searchable ? chunkText(searchable).map((content) => ({ content, path: null })) : [],
     file.name
   );
 
@@ -168,17 +171,4 @@ export async function replaceChunks(
   for (let i = 0; i < rows.length; i += 500) {
     await db.insert(fileChunks).values(rows.slice(i, i + 500));
   }
-}
-
-function scheduleOverviews() {
-  clearTimeout(state.overviewTimer);
-  state.overviewTimer = setTimeout(async () => {
-    const agentIds = [...state.dirtyAgents];
-    state.dirtyAgents.clear();
-    for (const id of agentIds) {
-      await generateOverview(id).catch((err) =>
-        console.error("Overview refresh failed", err)
-      );
-    }
-  }, OVERVIEW_DEBOUNCE_MS);
 }

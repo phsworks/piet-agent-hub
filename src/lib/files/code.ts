@@ -5,7 +5,7 @@ import { db } from "@/lib/db/client";
 import { files } from "@/lib/db/schema";
 import { getAgentById } from "@/lib/agents/registry";
 import { saveMemory } from "@/lib/memory/store";
-import { MODEL_NAME, CONTENT_LANGUAGE } from "@/lib/config";
+import { FAST_MODEL_NAME, CONTENT_LANGUAGE } from "@/lib/config";
 import { replaceChunks } from "./worker";
 import type { CodeSnapshot } from "./ingest";
 
@@ -75,7 +75,7 @@ export async function processCodeSnapshot(file: typeof files.$inferSelect) {
     .join("\n");
 
   const response = await anthropic.messages.create({
-    model: MODEL_NAME,
+    model: FAST_MODEL_NAME,
     max_tokens: 4096,
     system: `You review a snapshot of the code for Piet's project "${agent.name}" (${agent.description}). Piet uploads it so his assistant understands where the project stands; he will ask questions and want insight and tips, not code generation. Write in ${CONTENT_LANGUAGE}.`,
     tools: [

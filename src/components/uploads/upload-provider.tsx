@@ -188,7 +188,7 @@ export function UploadProvider({ children }: { children: ReactNode }) {
       if (!e.dataTransfer || !isFileDrag(e)) return;
       e.preventDefault();
       const files = await filesFromDrop(e.dataTransfer);
-      uploadFiles(files, { label: "the Brain" });
+      uploadFiles(files, { label: "your files" });
     };
     // Drop zones stop propagation, so this only sees drops outside them.
     const onZoneDrop = () => {

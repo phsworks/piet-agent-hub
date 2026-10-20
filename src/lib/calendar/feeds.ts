@@ -44,10 +44,10 @@ export async function removeFeed(id: string) {
   await db.delete(calendarEvents).where(eq(calendarEvents.feedId, id));
 }
 
-type ParsedEvent = Omit<typeof calendarEvents.$inferInsert, "id" | "feedId">;
+export type ParsedEvent = Omit<typeof calendarEvents.$inferInsert, "id" | "feedId">;
 
 /** Expands a feed's events (including recurring ones) that overlap [from, to). */
-function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
+export function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
   const root = new ICAL.Component(ICAL.parse(text));
   for (const tz of root.getAllSubcomponents("vtimezone")) {
     ICAL.TimezoneService.register(tz);
@@ -59,7 +59,15 @@ function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
   const masterUids = new Set(masters.map((v) => v.getFirstPropertyValue("uid")));
 
   const out: ParsedEvent[] = [];
-  const push = (uid: string, key: string, summary: string, location: string | null, start: ICAL.Time, end: ICAL.Time) => {
+  const push = (
+    uid: string,
+    key: string,
+    summary: string,
+    location: string | null,
+    start: ICAL.Time,
+    end: ICAL.Time,
+    recurring = false
+  ) => {
     const startsAt = start.toJSDate();
     const endsAt = end.toJSDate();
     if (endsAt <= from || startsAt >= to) return;
@@ -70,6 +78,7 @@ function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
       startsAt,
       endsAt,
       allDay: start.isDate,
+      recurring,
     });
   };
   const cancelled = (v: ICAL.Component) =>
@@ -100,7 +109,8 @@ function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
         details.item.summary,
         details.item.location,
         details.startDate,
-        details.endDate
+        details.endDate,
+        true
       );
     }
   }
@@ -109,7 +119,7 @@ function parseFeed(text: string, from: Date, to: Date): ParsedEvent[] {
   for (const exc of exceptions) {
     if (masterUids.has(exc.getFirstPropertyValue("uid")) || cancelled(exc)) continue;
     const event = new ICAL.Event(exc);
-    push(event.uid, event.recurrenceId.toString(), event.summary, event.location, event.startDate, event.endDate);
+    push(event.uid, event.recurrenceId.toString(), event.summary, event.location, event.startDate, event.endDate, true);
   }
 
   return out;
@@ -123,18 +133,27 @@ async function syncFeed(feed: CalendarFeed) {
   const text = await res.text();
   if (!text.includes("BEGIN:VCALENDAR")) throw new Error("This link doesn't return an iCal calendar");
 
-  const now = Date.now();
-  const from = new Date(now - SYNC_PAST_DAYS * 86_400_000);
-  const to = new Date(now + SYNC_FUTURE_DAYS * 86_400_000);
-  const events = parseFeed(text, from, to);
+  const { from, to } = syncWindow();
+  const events = parseFeed(text, from, to).map((e) => ({ ...e, calendar: feed.name }));
+  return replaceEvents(feed.id, events);
+}
 
+export function syncWindow() {
+  const now = Date.now();
+  return {
+    from: new Date(now - SYNC_PAST_DAYS * 86_400_000),
+    to: new Date(now + SYNC_FUTURE_DAYS * 86_400_000),
+  };
+}
+
+/** Replaces all stored events of one source (a feed or an iCloud calendar). */
+export async function replaceEvents(feedId: string, events: ParsedEvent[]) {
   // Deduplicate: some feeds repeat the same occurrence.
   const unique = [...new Map(events.map((e) => [e.externalId, e])).values()];
-
   await db.transaction(async (tx) => {
-    await tx.delete(calendarEvents).where(eq(calendarEvents.feedId, feed.id));
+    await tx.delete(calendarEvents).where(eq(calendarEvents.feedId, feedId));
     for (let i = 0; i < unique.length; i += 500) {
-      await tx.insert(calendarEvents).values(unique.slice(i, i + 500).map((e) => ({ ...e, feedId: feed.id })));
+      await tx.insert(calendarEvents).values(unique.slice(i, i + 500).map((e) => ({ ...e, feedId })));
     }
   });
   return unique.length;
@@ -162,23 +181,34 @@ export async function syncFeeds(onlyId?: string) {
   return results;
 }
 
-/** Events overlapping [from, to), oldest first, with the feed's name. */
+/** Events overlapping [from, to), oldest first, with their calendar's name. */
 export async function listEvents(from: Date, to: Date) {
-  const feeds = await listFeeds();
   const rows = await db
     .select()
     .from(calendarEvents)
     .where(and(gte(calendarEvents.endsAt, from), lt(calendarEvents.startsAt, to)))
     .orderBy(asc(calendarEvents.startsAt));
-  return rows.map((r) => ({
+  return rows.map(toEvent);
+}
+
+export async function getEvent(id: string) {
+  const [row] = await db.select().from(calendarEvents).where(eq(calendarEvents.id, id));
+  return row ? toEvent(row) : null;
+}
+
+function toEvent(r: typeof calendarEvents.$inferSelect) {
+  return {
     id: r.id,
     title: r.title,
     location: r.location,
     startsAt: r.startsAt.toISOString(),
     endsAt: r.endsAt.toISOString(),
     allDay: r.allDay,
-    feed: feeds.find((f) => f.id === r.feedId)?.name ?? null,
-  }));
+    feed: r.calendar,
+    // Only single iCloud events can be moved or deleted; feeds are read-only.
+    editable: Boolean(r.href) && !r.recurring,
+    recurring: r.recurring,
+  };
 }
 
 export type CalendarEvent = Awaited<ReturnType<typeof listEvents>>[number];
