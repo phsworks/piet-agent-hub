@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { getSetting, setSetting } from "@/lib/settings";
 import { ensureRootSubfolder, listFolderFiles, trashDriveFile, uploadToDrive } from "@/lib/google/drive";
-import { getGoogleStatus } from "@/lib/google/auth";
+import { getGoogleStatus, isExpiredGrant } from "@/lib/google/auth";
 import { dayKey } from "@/lib/dates";
 import { notifyOwner } from "@/lib/telegram/api";
 
@@ -9,6 +9,7 @@ import { notifyOwner } from "@/lib/telegram/api";
 // (BACKUP_TO_DRIVE=true), so a dev database never overwrites the real backups.
 const KEEP = 14;
 const STATE_KEY = "backup_last";
+const WARNED_KEY = "backup_warned";
 // A missed backup (server was down) is made on start once it's this old.
 export const BACKUP_STALE_MS = 26 * 3_600_000;
 
@@ -49,6 +50,14 @@ export async function runBackup() {
     console.log(`[backup] ${Math.round(data.length / 1024)} KB to Drive, ${old.length} old removed`);
   } catch (err) {
     console.error("[backup] failed", err);
-    await notifyOwner(`⚠️ De nachtelijke backup is mislukt: ${err instanceof Error ? err.message.slice(0, 200) : err}`);
+    // One message per problem per day is enough; the 03:30 run shouldn't wake Piet with a repeat.
+    const lastWarned = await getSetting<string>(WARNED_KEY);
+    if (lastWarned && Date.now() - Date.parse(lastWarned) < 24 * 3_600_000) return;
+    await setSetting(WARNED_KEY, new Date().toISOString());
+    await notifyOwner(
+      isExpiredGrant(err)
+        ? "⚠️ Backup niet gelukt: de Google-koppeling is verlopen. Koppel Google opnieuw in Settings, dan gaat de backup vannacht weer goed."
+        : `⚠️ De nachtelijke backup is mislukt: ${err instanceof Error ? err.message.slice(0, 200) : err}`
+    );
   }
 }

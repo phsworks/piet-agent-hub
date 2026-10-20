@@ -75,6 +75,30 @@ export async function getGoogleStatus() {
   };
 }
 
+/** Google rejected the stored refresh token (revoked, or expired after 7 days while the OAuth app is in testing). */
+export function isExpiredGrant(err: unknown) {
+  return /invalid_grant/.test(String((err as { message?: string })?.message ?? err));
+}
+
+/** Status plus a live check that the token still works (one token request). */
+export async function checkGoogle() {
+  const status = await getGoogleStatus();
+  if (!status.connected) return { ...status, error: null };
+  try {
+    await (await getAuthedClient()).getAccessToken();
+    return { ...status, error: null };
+  } catch (err) {
+    return {
+      ...status,
+      error: isExpiredGrant(err)
+        ? "The connection expired. Click Reconnect."
+        : err instanceof Error
+          ? err.message
+          : String(err),
+    };
+  }
+}
+
 export async function disconnectGoogle() {
   const stored = await getSetting<StoredGoogle>(TOKEN_KEY);
   if (stored) {

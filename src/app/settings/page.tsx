@@ -13,6 +13,7 @@ type GoogleStatus = {
   connected: boolean;
   email: string | null;
   connectedAt: string | null;
+  error?: string | null;
 };
 
 export default function SettingsPage() {
@@ -62,7 +63,7 @@ export default function SettingsPage() {
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             Google
-            {google?.connected && <Badge variant="secondary">Connected</Badge>}
+            {google?.connected && !google.error && <Badge variant="secondary">Connected</Badge>}
           </CardTitle>
           <CardDescription>
             Read access to all of your Drive, so the assistant can search and read your files. The app
@@ -83,6 +84,7 @@ export default function SettingsPage() {
               {google.connectedAt && ` since ${new Date(google.connectedAt).toLocaleDateString()}`}.
             </p>
           )}
+          {google?.error && <p className="text-destructive">{google.error}</p>}
           {google?.configured && !google.connected && (
             <p className="text-muted-foreground">Not connected yet.</p>
           )}

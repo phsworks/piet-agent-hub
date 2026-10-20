@@ -6,7 +6,7 @@
 # Undo: on the VPS `docker compose -f docker-compose.prod.yml stop app`, then
 # remove BACKGROUND_JOBS=off from .env.local and run `npm run service install`.
 set -euo pipefail
-VPS="${VPS:-root@piet-brain}"
+VPS="${VPS:-root@piet-brain.tail4b403a.ts.net}"
 DIR=/opt/piet-brain
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE="docker compose -f docker-compose.prod.yml"

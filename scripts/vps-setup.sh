@@ -4,7 +4,7 @@
 #   bash scripts/vps-setup.sh root@<public ip>    first run
 #   bash scripts/vps-setup.sh lock                 afterwards: close public SSH (Tailscale only)
 set -euo pipefail
-VPS="${VPS:-root@piet-brain}"
+VPS="${VPS:-root@piet-brain.tail4b403a.ts.net}"
 
 if [ "${1:-}" = "lock" ]; then
   # Only once `ssh root@piet-brain` works over Tailscale.

@@ -5,7 +5,7 @@
 #   npm run deploy -- --build-only
 #   npm run deploy -- logs       follow the app's logs
 set -euo pipefail
-VPS="${VPS:-root@piet-brain}"
+VPS="${VPS:-root@piet-brain.tail4b403a.ts.net}"
 DIR=/opt/piet-brain
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 COMPOSE="docker compose -f docker-compose.prod.yml"
