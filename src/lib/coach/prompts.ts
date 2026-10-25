@@ -116,7 +116,7 @@ export async function nudgesToday() {
   const rows = await db
     .select({ id: coachPrompts.id, goalId: coachPrompts.goalId })
     .from(coachPrompts)
-    .where(and(inArray(coachPrompts.kind, ["goal", "deadline"]), gte(coachPrompts.createdAt, zonedDate(dayKey()))));
+    .where(and(inArray(coachPrompts.kind, ["goal", "deadline", "project"]), gte(coachPrompts.createdAt, zonedDate(dayKey()))));
   return rows;
 }
 

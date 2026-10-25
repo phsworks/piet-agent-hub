@@ -6,6 +6,8 @@ import { completeTask, rescheduleTask } from "@/lib/ticktick/client";
 import { findSlots, formatSlot, shortSlot } from "@/lib/coach/slots";
 import { isDayPart } from "@/lib/coach/goals";
 import { eveningButtons } from "@/lib/coach/checkins";
+import { focusButtons, focusSlot, focusTitle, type FocusPayload } from "@/lib/coach/focus";
+import { COACH_CALENDAR } from "@/lib/config";
 import {
   logRoutine,
   planItem,
@@ -33,6 +35,7 @@ export async function handleCallback(query: TelegramCallbackQuery) {
     if (prompt.kind === "evening") await evening(prompt, action, edit);
     else if (prompt.kind === "routine") await routine(prompt, action, edit);
     else if (prompt.kind === "weekly") await weekly(prompt, action, edit);
+    else if (prompt.kind === "focus") await focus(prompt, action, edit);
     else await suggestion(prompt, action, edit);
     await answerCallback(query.id);
   } catch (err) {
@@ -95,6 +98,40 @@ async function routine(prompt: CoachPrompt, action: string, edit: Edit) {
   await logRoutine(goalId, prompt.day ?? dayKey(), action === "d" ? "done" : "skipped");
   await setPrompt(prompt, { status: action === "d" ? "done" : "skipped" });
   return edit(`${text}\n\n${action === "d" ? "✓ Gedaan. Slaap lekker 🌙" : "— Vandaag niet, prima."}`);
+}
+
+async function focus(prompt: CoachPrompt, action: string, edit: Edit) {
+  const payload = prompt.payload as FocusPayload;
+  if (prompt.status !== "sent") return;
+  if (action === "skip") {
+    await setPrompt(prompt, { status: "skipped" });
+    return edit(`${payload.text}\n\n— Vandaag niet`);
+  }
+
+  if (action[0] === "p") {
+    const picked = Number(action.slice(1));
+    if (!payload.options[picked]) return;
+    payload.picked = picked;
+    await setPrompt(prompt, { payload });
+    // One free stretch: no need to ask when.
+    if (payload.blocks.length > 1) {
+      return edit(`${payload.text}\n\n${payload.options[picked].name}. Wanneer?`, focusButtons(prompt.id, payload));
+    }
+    action = "b0";
+  }
+
+  const block = payload.blocks[Number(action.slice(1))];
+  if (action[0] !== "b" || !block || payload.picked === undefined) return;
+  const slot = focusSlot(block);
+  const name = payload.options[payload.picked].name;
+  // Mark first so a double tap doesn't plan it twice; undo when iCloud fails.
+  await setPrompt(prompt, { status: "planned" });
+  const durationMinutes = (Date.parse(slot.end) - Date.parse(slot.start)) / 60_000;
+  await planItem({ title: focusTitle(name), calendar: COACH_CALENDAR, slot, durationMinutes }).catch(async (err) => {
+    await setPrompt(prompt, { status: "sent" });
+    throw err;
+  });
+  return edit(`${payload.text}\n\n✓ Ingepland: ${focusTitle(name)}, ${formatSlot(slot)}`);
 }
 
 async function weekly(prompt: CoachPrompt, action: string, edit: Edit) {

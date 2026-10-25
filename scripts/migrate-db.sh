@@ -4,7 +4,7 @@
 # starts the VPS. Google, TickTick and iCloud stay connected: their tokens
 # live in the database.
 # Undo: on the VPS `docker compose -f docker-compose.prod.yml stop app`, then
-# remove BACKGROUND_JOBS=off from .env.local and run `npm run service install`.
+# set BACKGROUND_JOBS=on in .env.local and run `npm run service install`.
 set -euo pipefail
 VPS="${VPS:-root@piet-brain.tail4b403a.ts.net}"
 DIR=/opt/piet-brain
@@ -32,6 +32,4 @@ ssh "$VPS" "cd $DIR && $COMPOSE up -d db \
 echo "5/5 Starting the app on the VPS…"
 ssh "$VPS" "cd $DIR && $COMPOSE up -d"
 
-# Local dev from now on: no bot, no coach, no cron jobs (they'd answer twice).
-grep -q '^BACKGROUND_JOBS=' "$ROOT/.env.local" || echo "BACKGROUND_JOBS=off" >> "$ROOT/.env.local"
 echo "Done. The hub runs on the VPS; local dev (npm run dev) no longer runs the bot or jobs."

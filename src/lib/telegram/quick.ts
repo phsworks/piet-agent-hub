@@ -3,6 +3,7 @@ import { TIMEZONE } from "@/lib/config";
 import { dayKey, timeKey, utcOffsetMinutes, zonedDate } from "@/lib/dates";
 import { listEvents } from "@/lib/calendar/feeds";
 import { listTasks } from "@/lib/ticktick/client";
+import { projectDeadlines } from "@/lib/gitlab/progress";
 
 const pad = (n: number) => String(n).padStart(2, "0");
 
@@ -77,22 +78,36 @@ export async function todayOverview() {
 export async function weekOverview() {
   const today = dayKey(new Date());
   const last = addDays(today, 6);
-  const [events, tasks] = await Promise.all([
+  const [events, tasks, gitlab] = await Promise.all([
     listEvents(zonedDate(today), zonedDate(last, "23:59")),
     listTasks().catch(() => null),
+    projectDeadlines(last, today),
   ]);
 
   const lines: string[] = [`🗓 Komende week, t/m ${formatDue(last, null)}`];
   const overdue = tasks?.filter((t) => t.dueDay && t.dueDay < today) ?? [];
-  if (overdue.length) lines.push("", "⚠️ Te laat", ...overdue.map((t) => taskLine(t, formatDue(t.dueDay, null))));
+  const overdueIssues = gitlab.filter((d) => d.dueOn < today);
+  if (overdue.length || overdueIssues.length) {
+    lines.push(
+      "",
+      "⚠️ Te laat",
+      ...overdue.map((t) => taskLine(t, formatDue(t.dueDay, null))),
+      ...overdueIssues.map((d) => `- ${d.title} (${formatDue(d.dueOn, null)}) · ${d.project}`)
+    );
+  }
 
   for (let i = 0; i < 7; i++) {
     const day = addDays(today, i);
     const dayEvents = events.filter((e) => dayKey(new Date(e.startsAt)) === day);
     const dayTasks = tasks?.filter((t) => t.dueDay === day) ?? [];
-    if (!dayEvents.length && !dayTasks.length) continue;
+    const dayGitlab = gitlab.filter((d) => d.dueOn === day);
+    if (!dayEvents.length && !dayTasks.length && !dayGitlab.length) continue;
     lines.push("", `${i === 0 ? "Vandaag" : i === 1 ? "Morgen" : formatDue(day, null)}`);
-    lines.push(...dayEvents.map(eventLine), ...dayTasks.map((t) => taskLine(t).replace(/^- /, "- ☐ ")));
+    lines.push(
+      ...dayEvents.map(eventLine),
+      ...dayTasks.map((t) => taskLine(t).replace(/^- /, "- ☐ ")),
+      ...dayGitlab.map((d) => `- ${d.type === "milestone" ? "🏁" : "☐"} ${d.title} · ${d.project}`)
+    );
   }
   if (lines.length === 1) lines.push("Niets gepland. 🌴");
   if (tasks === null) lines.push("", "TickTick is niet gekoppeld (Settings).");

@@ -13,6 +13,7 @@ import { describeGoal, progressLine, weekProgress } from "@/lib/coach/goals";
 import { isCoachPaused, keyExists, setCoachPaused } from "@/lib/coach/prompts";
 import { morningCheckin } from "@/lib/coach/checkins";
 import { dayKey } from "@/lib/dates";
+import { allProgress, findProject, progressDetail, progressSummary, projectProgress } from "@/lib/gitlab/progress";
 import {
   MAX_DOWNLOAD_BYTES,
   downloadFile,
@@ -29,7 +30,14 @@ const TYPING_REFRESH_MS = 4_500;
 // After ➕ Taak / 📝 Notitie, the next message is the task or note.
 // In memory only: a restart simply forgets a half-finished button press.
 const PENDING_MS = 10 * 60_000;
-let pending: { kind: "task" | "note"; until: number } | null = null;
+type PendingKind = "task" | "note" | "feedback";
+let pending: { kind: PendingKind; until: number } | null = null;
+
+const PENDING_PROMPTS: Record<PendingKind, { prompt: string; command: string }> = {
+  task: { prompt: 'Welke taak? Bv. "morgen 9:00 mail docent"', command: "/t" },
+  note: { prompt: "Wat wil je onthouden?", command: "/n" },
+  feedback: { prompt: "Wat stoort je of wil je anders? Wat ik zelf kan aanpassen doe ik meteen.", command: "/fb" },
+};
 
 const HELP = `Stuur me gewoon een bericht:
 - een vraag: "waar staat de rubric van semester 3?", "wat moet ik deze week doen?"
@@ -38,18 +46,23 @@ const HELP = `Stuur me gewoon een bericht:
 - plannen: "plan woensdagavond een uur hardlopen"
 - een foto, PDF of ander bestand: ik zet het in Drive en maak het doorzoekbaar (een bijschrift helpt bij het opbergen)
 
-Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, ➕ Taak, 📝 Notitie.
+- een tech-vraag: "hoe werkt een REST API eigenlijk?", "waarom is mijn query traag?"
 
-Coach: elke ochtend (07:30) een check-in, 's avonds (21:00) afvinken, zondag (19:00) een weekreview, en tussendoor een seintje als een deadline nadert of een doel achterloopt. Doelen stel je in door het te zeggen: "ik wil 3× per week hardlopen, 's ochtends".
+Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, ➕ Taak, 📝 Notitie, 🛠 Feedback (iets aan mij dat je stoort).
+
+Coach: elke ochtend (07:30) een check-in met een tech-feitje, 's avonds (21:00) afvinken, zondag (19:00) een weekreview, en tussendoor een seintje als een deadline nadert of een doel achterloopt. Doelen stel je in door het te zeggen: "ik wil 3× per week hardlopen, 's ochtends".
 
 Commando's:
 /week: de komende 7 dagen (zonder AI, gratis)
 /doelen: je doelen en hoe je ervoor staat
+/project of /project <naam>: voortgang van je GitLab-projecten, bv. /project kova (zonder AI, gratis)
 /coach uit of /coach aan: check-ins en seintjes pauzeren
 /coach nu: de ochtend-check-in nu al (als die vandaag nog niet kwam)
 /t <taak>: meteen in TickTick, bv. /t morgen 9:00 mail docent (zonder AI, gratis)
 /vandaag: je afspraken en taken van vandaag (zonder AI, gratis)
 /n <tekst>: meteen opslaan als notitie (zonder AI, gratis)
+/uitleg <onderwerp>: tech-uitleg, bv. /uitleg hoe werkt OAuth
+/fb <tekst>: feedback over de bot of coach (wat kan, pas ik meteen aan)
 /diep <vraag>: zwaarder model voor lastige vragen
 /nieuw: nieuw gesprek (vergeet de vorige berichten)`;
 
@@ -86,18 +99,16 @@ async function handleText(chatId: number, text: string) {
   if (text === BUTTONS.today) text = "/vandaag";
   else if (text === BUTTONS.week) text = "/week";
   else if (text === BUTTONS.goals) text = "/doelen";
-  else if (text === BUTTONS.task || text === BUTTONS.note) {
-    pending = { kind: text === BUTTONS.task ? "task" : "note", until: Date.now() + PENDING_MS };
-    return sendMessage(
-      chatId,
-      pending.kind === "task" ? "Welke taak? Bv. \"morgen 9:00 mail docent\"" : "Wat wil je onthouden?"
-    );
+  else if (text === BUTTONS.task || text === BUTTONS.note || text === BUTTONS.feedback) {
+    const kind: PendingKind = text === BUTTONS.task ? "task" : text === BUTTONS.note ? "note" : "feedback";
+    pending = { kind, until: Date.now() + PENDING_MS };
+    return sendMessage(chatId, PENDING_PROMPTS[kind].prompt);
   }
 
-  // The message after ➕/📝 is the content, unless it's a command or the wait expired.
+  // The message after ➕/📝/🛠 is the content, unless it's a command or the wait expired.
   const waiting = pending && pending.until > Date.now() && !text.startsWith("/") ? pending.kind : null;
   pending = null;
-  if (waiting) text = `${waiting === "task" ? "/t" : "/n"} ${text}`;
+  if (waiting) text = `${PENDING_PROMPTS[waiting].command} ${text}`;
 
   const [command] = text.split(/\s+/);
   const args = text.slice(command.length).trim();
@@ -133,6 +144,9 @@ async function handleText(chatId: number, text: string) {
       return sendMessage(chatId, await weekOverview());
     case "/doelen":
       return sendMessage(chatId, await goalsOverview());
+    case "/project":
+    case "/projecten":
+      return sendMessage(chatId, await projectsOverview(args));
     case "/coach": {
       const wanted = args.toLowerCase();
       // Try the check-in now instead of waiting for tomorrow morning.
@@ -150,6 +164,14 @@ async function handleText(chatId: number, text: string) {
           : "▶️ De coach staat aan. Pauzeren kan met /coach uit."
       );
     }
+    case "/fb":
+    case "/feedback":
+      if (!args) return sendMessage(chatId, "Gebruik: /fb <wat je stoort of anders wilt>");
+      // Via the assistant: it applies what a setting can fix and logs the rest.
+      return ask(chatId, `Feedback over de hub: ${args}`, false);
+    case "/uitleg":
+      if (!args) return sendMessage(chatId, "Gebruik: /uitleg <onderwerp>, bv. /uitleg hoe werkt OAuth");
+      return ask(chatId, `Leg uit als mijn development buddy: ${args}`, false);
     case "/diep":
       if (!args) return sendMessage(chatId, "Gebruik: /diep <vraag>");
       return ask(chatId, args, true);
@@ -171,6 +193,16 @@ async function goalsOverview() {
   lines.push("", "Ingesteld:", ...progress.map((p) => `- ${describeGoal(p.goal)}`));
   if (await isCoachPaused()) lines.push("", "⏸ De coach staat uit (/coach aan).");
   return lines.join("\n");
+}
+
+async function projectsOverview(name: string) {
+  if (name) {
+    const project = await findProject(name);
+    return project ? progressDetail(await projectProgress(project)) : `Geen (uniek) project gevonden voor "${name}". Probeer /project zonder naam.`;
+  }
+  const all = await allProgress();
+  if (all.length === 0) return "Nog geen GitLab-projecten gevolgd. Kies ze in Settings.";
+  return ["📈 Laatste 7 dagen", ...all.map((p) => `- ${progressSummary(p)}`), "", "Details: /project <naam>"].join("\n");
 }
 
 async function ask(chatId: number, question: string, deep: boolean) {

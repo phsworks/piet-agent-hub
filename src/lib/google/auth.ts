@@ -69,6 +69,9 @@ export async function getGoogleStatus() {
   const stored = await getSetting<StoredGoogle>(TOKEN_KEY);
   return {
     configured: isGoogleConfigured(),
+    // What Google must have under "Authorized redirect URIs" of this client, character for character.
+    redirectUri: `${appUrl()}/api/google/callback`,
+    clientIdEnd: process.env.GOOGLE_CLIENT_ID?.split(".")[0].slice(-6) ?? null,
     connected: Boolean(stored),
     email: stored?.email ?? null,
     connectedAt: stored?.connectedAt ?? null,

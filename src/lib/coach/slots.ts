@@ -63,6 +63,44 @@ export async function findSlots(opts: {
   return slots;
 }
 
+/**
+ * All free stretches of at least `minMinutes` on one day within [from, until],
+ * longest first (for "you have 13:00–17:00 free"). Same rules as findSlots:
+ * half-hour grid, margin around events, all-day events don't count.
+ */
+export async function freeBlocks(opts: { day: string; from: string; until: string; minMinutes: number }): Promise<Slot[]> {
+  const events = await listEvents(zonedDate(opts.day), zonedDate(addDays(opts.day, 1)));
+  const margin = COACH.bufferMinutes * 60_000;
+  const busy = events
+    .filter((e) => !e.allDay)
+    .map((e) => ({ start: Date.parse(e.startsAt) - margin, end: Date.parse(e.endsAt) + margin }))
+    .sort((a, b) => a.start - b.start);
+  const until = zonedDate(opts.day, opts.until).getTime();
+  let cursor = Math.max(zonedDate(opts.day, opts.from).getTime(), Math.ceil((Date.now() + STEP_MS) / STEP_MS) * STEP_MS);
+
+  const blocks: Slot[] = [];
+  const add = (start: number, end: number) => {
+    // Start on the grid, end on the grid: 13:10–16:50 becomes 13:30–16:30.
+    const s = Math.ceil(start / STEP_MS) * STEP_MS;
+    const e = Math.floor(end / STEP_MS) * STEP_MS;
+    if (e - s >= opts.minMinutes * 60_000) blocks.push({ start: new Date(s).toISOString(), end: new Date(e).toISOString() });
+  };
+  for (const b of busy) {
+    if (b.end <= cursor) continue;
+    if (b.start >= until) break;
+    add(cursor, Math.min(b.start, until));
+    cursor = Math.max(cursor, b.end);
+  }
+  add(cursor, until);
+  return blocks.sort((a, b) => Date.parse(b.end) - Date.parse(b.start) - (Date.parse(a.end) - Date.parse(a.start)));
+}
+
+/** "2 u" or "1,5 u" */
+export function slotHours(slot: Slot) {
+  const hours = (Date.parse(slot.end) - Date.parse(slot.start)) / 3_600_000;
+  return `${String(hours).replace(".", ",")} u`;
+}
+
 /** "wo 22 okt 07:00–08:00" (or "vandaag 07:00–08:00") */
 export function formatSlot(slot: Slot) {
   const start = new Date(slot.start);

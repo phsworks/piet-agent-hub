@@ -7,6 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
 import { CalendarFeeds } from "@/components/settings/calendar-feeds";
 import { ICloudCard, TickTickCard } from "@/components/settings/integrations";
+import { GitLabCard } from "@/components/settings/gitlab-card";
 
 type GoogleStatus = {
   configured: boolean;
@@ -14,6 +15,8 @@ type GoogleStatus = {
   email: string | null;
   connectedAt: string | null;
   error?: string | null;
+  redirectUri?: string;
+  clientIdEnd?: string | null;
 };
 
 export default function SettingsPage() {
@@ -88,6 +91,13 @@ export default function SettingsPage() {
           {google?.configured && !google.connected && (
             <p className="text-muted-foreground">Not connected yet.</p>
           )}
+          {google?.configured && google.redirectUri && (
+            <p className="mt-3 text-xs text-muted-foreground">
+              &quot;redirect_uri_mismatch&quot;? In Google Cloud, the OAuth client ending in{" "}
+              <code>…{google.clientIdEnd}</code> (type Web application) needs exactly this under Authorized
+              redirect URIs: <code className="break-all text-foreground">{google.redirectUri}</code>
+            </p>
+          )}
         </CardContent>
         {google?.configured && (
           <CardFooter className="gap-2 justify-end">
@@ -105,6 +115,7 @@ export default function SettingsPage() {
 
       <TickTickCard />
       <ICloudCard />
+      <GitLabCard />
       <CalendarFeeds />
     </div>
   );

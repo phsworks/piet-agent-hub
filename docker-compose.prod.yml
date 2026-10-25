@@ -23,6 +23,8 @@ services:
     restart: unless-stopped
     env_file: .env.production
     environment:
+      # The only place the bot, coach and cron jobs run (see src/instrumentation.ts).
+      BACKGROUND_JOBS: "on"
       BACKUP_TO_DRIVE: "true"
     depends_on:
       db:

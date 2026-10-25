@@ -286,4 +286,72 @@ export const coachPrompts = pgTable(
   ]
 );
 
+// Things about the hub itself that bother Piet ("de coach stuurt te vaak…"),
+// sent from Telegram. Settings the assistant can change are applied at once
+// (resolution says how); the rest waits for the next coding session
+// (`npm run feedback` lists them).
+export const feedback = pgTable("feedback", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  text: text("text").notNull(),
+  // open | applied | done | dismissed
+  status: text("status").notNull().default("open"),
+  resolution: text("resolution"),
+  source: text("source").notNull().default("telegram"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  resolvedAt: timestamp("resolved_at", { withTimezone: true }),
+});
+
+// GitLab projects the hub follows (HvA GitLab: Kova, school projects). Picked
+// in Settings; kind "school" vs "project" only changes how they're grouped.
+export const gitlabProjects = pgTable("gitlab_projects", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  gitlabId: integer("gitlab_id").notNull().unique(),
+  // "group/kova"
+  path: text("path").notNull(),
+  name: text("name").notNull(),
+  webUrl: text("web_url").notNull(),
+  // project | school
+  kind: text("kind").notNull().default("project"),
+  // The matching folder in the tree, so the focus suggestion and progress use one name.
+  agentId: uuid("agent_id").references(() => agents.id, { onDelete: "set null" }),
+  lastSyncedAt: timestamp("last_synced_at", { withTimezone: true }),
+  lastError: text("last_error"),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+// Commits, merge requests, issues and milestones of followed projects, synced
+// incrementally (updated_after). Progress and deadlines are computed from here
+// in code, so asking "hoe staat Kova ervoor?" needs no GitLab request.
+export const gitlabItems = pgTable(
+  "gitlab_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    projectId: uuid("project_id")
+      .notNull()
+      .references(() => gitlabProjects.id, { onDelete: "cascade" }),
+    // commit | mr | issue | milestone
+    type: text("type").notNull(),
+    // Commit sha, or the iid/id GitLab shows.
+    externalId: text("external_id").notNull(),
+    title: text("title").notNull(),
+    // opened | closed | merged | active (milestones) | null for commits
+    state: text("state"),
+    author: text("author"),
+    // Authored by or assigned to Piet.
+    mine: boolean("mine").notNull().default(false),
+    url: text("url"),
+    labels: text("labels").array().notNull().default(sql`'{}'::text[]`),
+    milestone: text("milestone"),
+    // Commit date, or when the MR/issue/milestone was created.
+    happenedAt: timestamp("happened_at", { withTimezone: true }).notNull(),
+    // Merged or closed.
+    closedAt: timestamp("closed_at", { withTimezone: true }),
+    dueOn: date("due_on", { mode: "string" }),
+  },
+  (table) => [
+    uniqueIndex("gitlab_items_project_type_external_idx").on(table.projectId, table.type, table.externalId),
+    index("gitlab_items_happened_idx").on(table.happenedAt),
+  ]
+);
+
 export const vectorExtension = sql`CREATE EXTENSION IF NOT EXISTS vector`;

@@ -59,6 +59,10 @@ export const COACH = {
   noBlockLists: ["Dagelijkse reminders"],
   // Margin around existing events when looking for free time.
   bufferMinutes: 15,
+  // Once a day: "you have 13:00–17:00 free, what do you want to work on?" with
+  // Piet's projects as options. Blocks shorter than minMinutes aren't worth it;
+  // a planned block is at most maxMinutes (a break after that).
+  focus: { from: "09:00", until: "22:00", minMinutes: 90, maxMinutes: 120 },
 } as const;
 
 // When a goal "prefers" a part of the day, slots are searched in these windows.
@@ -68,3 +72,11 @@ export const DAY_PARTS = {
   evening: { from: "18:00", until: "22:00" },
   any: { from: "08:00", until: "21:30" },
 } as const;
+
+// GitLab (HvA's own instance by default; GITLAB_URL overrides it). Token in GITLAB_TOKEN, scope read_api.
+export const GITLAB_DEFAULT_URL = "https://gitlab.fdmci.hva.nl";
+export const GITLAB_SYNC_MINUTES = 30;
+// The first sync of a project fetches commits this far back; later syncs only what changed.
+export const GITLAB_HISTORY_DAYS = 60;
+// Project nudge: a milestone due within this many days and no own commit for staleDays.
+export const GITLAB_NUDGE = { milestoneDays: 7, staleDays: 3 } as const;

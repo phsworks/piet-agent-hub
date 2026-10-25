@@ -8,6 +8,7 @@
     "start": "next start -H 127.0.0.1 -p 3210",
     "service": "bash scripts/service.sh",
     "deploy": "bash scripts/deploy.sh",
+    "feedback": "bash scripts/feedback.sh",
     "lint": "eslint",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx src/lib/db/migrate.ts",

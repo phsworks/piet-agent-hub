@@ -3,10 +3,11 @@ export async function register() {
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
   const { startWorker } = await import("@/lib/files/worker");
   startWorker().catch((err) => console.error("File worker failed to start", err));
-  // Once the hub runs on the VPS, a dev server on the Mac must not answer
-  // Telegram or send check-ins too: BACKGROUND_JOBS=off in .env.local.
-  if (process.env.BACKGROUND_JOBS === "off") {
-    console.log("Background jobs and the Telegram bot are off (BACKGROUND_JOBS=off)");
+  // Only one process may poll the Telegram bot and send check-ins, or Piet
+  // gets everything twice. That's the VPS: docker-compose.prod.yml sets
+  // BACKGROUND_JOBS=on. Anywhere else (npm run dev on the Mac) they stay off.
+  if (process.env.BACKGROUND_JOBS !== "on") {
+    console.log("Background jobs and the Telegram bot are off (set BACKGROUND_JOBS=on to run them)");
     return;
   }
   const { startJobs } = await import("@/lib/jobs/scheduler");

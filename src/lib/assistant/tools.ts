@@ -15,6 +15,11 @@ import { createICloudEvent, deleteICloudEvent, moveICloudEvent } from "@/lib/icl
 import { COACH_CALENDAR, SPORT_CALENDAR } from "@/lib/config";
 import { describeGoal, isDayPart, progressLine, removeGoal, saveGoal, weekProgress } from "@/lib/coach/goals";
 import { findSlots, formatSlot } from "@/lib/coach/slots";
+import { getCoachPrefs, setCoachPrefs, type CoachPrefs } from "@/lib/coach/prefs";
+import { isCoachPaused, setCoachPaused } from "@/lib/coach/prompts";
+import { addFeedback } from "@/lib/feedback";
+import { allProgress, findProject, progressDetail, progressSummary, projectDeadlines, projectProgress } from "@/lib/gitlab/progress";
+import { GitLabNotConfiguredError } from "@/lib/gitlab/client";
 
 // Caps keep a single question cheap: a whole document is ~5k tokens at most.
 const READ_MAX_CHARS = 20_000;
@@ -60,7 +65,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "list_deadlines",
     description:
-      "Piet's agenda (iCloud calendars, school timetable and other feeds) plus his open TickTick tasks, from today on. Overdue tasks are included. Times are local (Europe/Amsterdam). Events with an id can be moved or deleted.",
+      "Piet's agenda (iCloud calendars, school timetable and other feeds) plus his open TickTick tasks and GitLab deadlines (active milestones, his own open issues with a due date), from today on. Overdue tasks and issues are included. Times are local (Europe/Amsterdam). Events with an id can be moved or deleted.",
     input_schema: {
       type: "object",
       properties: {
@@ -133,6 +138,18 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "project_progress",
+    description:
+      "Progress of Piet's GitLab projects (e.g. Kova, school projects), from synced data: commits (his own and the team's), merged MRs, closed issues, active milestones with done/total and deadline, his open issues. Without project: a one-line summary of every followed project.",
+    input_schema: {
+      type: "object",
+      properties: {
+        project: { type: "string", description: "Project name or part of it, e.g. Kova." },
+        days: { type: "number", description: "Look-back window in days (default 7, max 90)." },
+      },
+    },
+  },
+  {
     name: "list_goals",
     description: "Piet's goals and fixed routines (e.g. hardlopen 2× per week) with this week's progress.",
     input_schema: { type: "object", properties: {} },
@@ -186,6 +203,36 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "coach_settings",
+    description:
+      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges.",
+    input_schema: {
+      type: "object",
+      properties: {
+        paused: { type: "boolean", description: "true = no check-ins or suggestions at all." },
+        max_nudges_per_day: { type: "number", description: "Deadline + goal suggestions per day (default 2, 0 = none)." },
+        deadline_nudges: { type: "boolean" },
+        focus_suggestion: { type: "boolean" },
+        tech_fact: { type: "boolean" },
+        project_nudges: { type: "boolean", description: "'No commits on Kova in 3 days and a milestone is coming, plan a block?'" },
+      },
+    },
+  },
+  {
+    name: "log_feedback",
+    description:
+      "Save feedback about the hub itself (something that bothers Piet, a bug, a wish for how the bot or coach should work). Always call this for such feedback. If you already fixed it with another tool (e.g. coach_settings, set_goal), set applied=true and say what you changed in resolution; otherwise it is picked up in the next coding session.",
+    input_schema: {
+      type: "object",
+      properties: {
+        text: { type: "string", description: "The feedback in Piet's words, made self-contained (what happened, what he wants)." },
+        applied: { type: "boolean" },
+        resolution: { type: "string", description: "What you changed, if applied." },
+      },
+      required: ["text"],
+    },
+  },
+  {
     name: "save_note",
     description:
       "Save a note or fact so Piet can find it later (e.g. 'onthoud dat…', a locker code, a decision, an idea). Similar existing notes are updated instead of duplicated.",
@@ -214,6 +261,9 @@ export const TOOL_LABELS: Record<string, string> = {
   set_goal: "Doel opslaan…",
   remove_goal: "Doel verwijderen…",
   find_free_time: "Vrije tijd zoeken…",
+  coach_settings: "Coach instellen…",
+  log_feedback: "Feedback noteren…",
+  project_progress: "Projecten bekijken…",
 };
 
 export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
@@ -223,7 +273,7 @@ export async function executeTool(name: string, input: Record<string, unknown>, 
     if (err instanceof GoogleNotConnectedError) {
       return { error: "Google Drive isn't connected. Piet can connect it in Settings." };
     }
-    if (err instanceof TickTickNotConnectedError) return { error: err.message };
+    if (err instanceof TickTickNotConnectedError || err instanceof GitLabNotConfiguredError) return { error: err.message };
     console.error(`Tool ${name} failed`, err);
     return { error: err instanceof Error ? err.message : String(err) };
   }
@@ -260,10 +310,11 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       const until = new Date(now.getTime() + days * 86_400_000);
       const today = dayKey(now);
       const lastDay = dayKey(until);
-      const [events, tasks] = await Promise.all([
+      const [events, tasks, gitlab] = await Promise.all([
         listEvents(now, until),
         // The agenda still answers when TickTick isn't connected.
         listTasks().catch((err: Error) => err),
+        projectDeadlines(lastDay, today),
       ]);
       const taskList = tasks instanceof Error ? [] : tasks;
       const undated = taskList.filter((t) => !t.dueDay);
@@ -292,6 +343,9 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
         undated_tasks: undated.slice(0, MAX_UNDATED_TASKS).map((t) => ({ id: t.id, title: t.title, list: t.list })),
         more_undated: undated.length > MAX_UNDATED_TASKS ? undated.length - MAX_UNDATED_TASKS : undefined,
         tasks_error: tasks instanceof Error ? tasks.message : undefined,
+        project_deadlines: gitlab.length
+          ? gitlab.map((d) => ({ project: d.project, type: d.type, title: d.title, due: d.dueOn, overdue: d.dueOn < today || undefined }))
+          : undefined,
       };
     }
     case "create_reminder": {
@@ -358,6 +412,16 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       const result = await deleteICloudEvent(String(input.event_id ?? ""));
       return { deleted: true, title: result.title, calendar: result.calendar };
     }
+    case "project_progress": {
+      const days = Math.min(Math.max(Number(input.days) || 7, 1), 90);
+      if (!input.project) {
+        const all = await allProgress(days);
+        return all.length ? { projects: all.map(progressSummary) } : { error: "No GitLab projects followed yet; Piet picks them in Settings." };
+      }
+      const project = await findProject(String(input.project));
+      if (!project) return { error: `No (single) followed project matches "${input.project}". Call without project to see them all.` };
+      return { progress: progressDetail(await projectProgress(project, days)) };
+    }
     case "list_goals": {
       const progress = await weekProgress();
       return {
@@ -395,6 +459,28 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
         preferred: isDayPart(input.preferred) ? input.preferred : "any",
       });
       return { slots: slots.map((s) => ({ date: dayKey(new Date(s.start)), start: timeKey(new Date(s.start)), end: timeKey(new Date(s.end)), label: formatSlot(s) })) };
+    }
+    case "coach_settings": {
+      if (typeof input.paused === "boolean") await setCoachPaused(input.paused);
+      const changes: Partial<CoachPrefs> = {};
+      if (input.max_nudges_per_day !== undefined) changes.maxNudgesPerDay = Math.max(0, Math.round(Number(input.max_nudges_per_day) || 0));
+      if (typeof input.deadline_nudges === "boolean") changes.deadlineNudges = input.deadline_nudges;
+      if (typeof input.focus_suggestion === "boolean") changes.focusSuggestion = input.focus_suggestion;
+      if (typeof input.tech_fact === "boolean") changes.techFact = input.tech_fact;
+      if (typeof input.project_nudges === "boolean") changes.projectNudges = input.project_nudges;
+      const prefs = Object.keys(changes).length ? await setCoachPrefs(changes) : await getCoachPrefs();
+      return { paused: await isCoachPaused(), ...prefs };
+    }
+    case "log_feedback": {
+      const text = String(input.text ?? "").trim();
+      if (!text) return { error: "text is empty" };
+      const row = await addFeedback({
+        text,
+        status: input.applied ? "applied" : "open",
+        resolution: input.resolution ? String(input.resolution) : null,
+        source,
+      });
+      return { saved: true, status: row.status };
     }
     case "save_note": {
       const result = await saveMemory({ content: String(input.content ?? ""), category: "note", source });

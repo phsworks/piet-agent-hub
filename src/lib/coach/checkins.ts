@@ -6,6 +6,9 @@ import { addDays, dayKey, isoWeekday, timeKey, weekStart, zonedDate } from "@/li
 import { formatDue } from "@/lib/telegram/quick";
 import { isDayPart, progressLine, weekProgress, type GoalProgress } from "./goals";
 import { findSlots, formatSlot, type Slot } from "./slots";
+import { getSetting, setSetting } from "@/lib/settings";
+import { getCoachPrefs } from "./prefs";
+import { allProgress, progressSummary, projectDeadlines } from "@/lib/gitlab/progress";
 import {
   claimKey,
   goalsSuggestedToday,
@@ -19,6 +22,27 @@ import {
 } from "./prompts";
 
 const anthropic = new Anthropic();
+
+// Recent morning tech facts, passed to Haiku so it picks a new topic.
+const TECH_FACTS_KEY = "coach_tech_facts";
+const TECH_FACTS_KEPT = 30;
+const TECH_FACT_LABEL = "Tech-feitje:";
+
+const techFactInstruction = (recent: string[]) =>
+  `Then add an empty line and one line starting with "${TECH_FACT_LABEL}": one correct, concrete and slightly surprising fact for an HBO-ICT student who builds AI apps, explained in at most 2 sentences. Vary the field: how APIs and HTTP work, networking and DNS, databases, operating systems, hardware, security, Git, programming languages, AI/LLMs, computing history.${
+    recent.length ? ` Pick a different topic than these recent ones:\n${recent.map((f) => `- ${f}`).join("\n")}` : ""
+  }`;
+
+/** Keeps the fact from today's message, so tomorrow's is about something else. */
+async function rememberTechFact(text: string) {
+  const fact = text.split("\n").find((l) => l.startsWith(TECH_FACT_LABEL));
+  if (!fact) return;
+  const recent = (await getSetting<string[]>(TECH_FACTS_KEY)) ?? [];
+  await setSetting(TECH_FACTS_KEY, [fact.slice(TECH_FACT_LABEL.length).trim().slice(0, 160), ...recent].slice(0, TECH_FACTS_KEPT));
+}
+
+// The morning check-in mentions GitLab milestones and issues due within this many days.
+const COACH_PROJECT_DAYS = 3;
 
 // Evening check: buttons per item, so keep the list short.
 const MAX_CHECK_ITEMS = 6;
@@ -84,11 +108,14 @@ export function suggestionPayload(text: string, item: PlanItem, p: GoalProgress 
 export async function morningCheckin() {
   const today = dayKey();
   const sunday = addDays(weekStart(today), 6);
-  const [events, tasks, progress, suggested] = await Promise.all([
+  const [events, tasks, progress, suggested, prefs, recentFacts, projectDue] = await Promise.all([
     listEvents(zonedDate(today), zonedDate(addDays(today, 1))),
     listTasks().catch(() => null),
     weekProgress(today),
     goalsSuggestedToday(),
+    getCoachPrefs(),
+    getSetting<string[]>(TECH_FACTS_KEY),
+    projectDeadlines(addDays(today, COACH_PROJECT_DAYS)),
   ]);
   const due = tasks?.filter((t) => t.dueDay && t.dueDay <= today) ?? [];
 
@@ -110,6 +137,7 @@ export async function morningCheckin() {
     `Calendar today: ${events.length ? events.map(eventLine).join("; ") : "nothing"}`,
     tasks === null ? "TickTick not connected." : `Tasks due today or overdue: ${due.length ? due.map((t) => taskLine(t, today)).join("; ") : "none"}`,
     progress.length ? `Goals this week: ${progress.map(progressLine).join("; ")}` : "No goals set.",
+    projectDue.length ? `GitLab deadlines soon: ${projectDue.map((d) => `${d.project}: ${d.title} (${formatDue(d.dueOn, null)})`).join("; ")}` : "",
     suggestion
       ? `Suggestion to plan: ${suggestion.item.title} ${formatSlot(suggestion.item.slot)} (buttons below let him plan it)`
       : "",
@@ -118,10 +146,12 @@ export async function morningCheckin() {
     .join("\n");
   const fallback = `☀️ Goedemorgen!\n${facts}`;
   const text = await coachText(
-    "Write the morning check-in: greet briefly, give the shape of his day in one or two sentences, mention what must not be forgotten, and if there is a suggestion, propose it with the exact time. Max 5 sentences.",
+    "Write the morning check-in: greet briefly, give the shape of his day in one or two sentences, mention what must not be forgotten, and if there is a suggestion, propose it with the exact time. Max 5 sentences." +
+      (prefs.techFact ? `\n${techFactInstruction(recentFacts ?? [])}` : ""),
     facts,
     fallback
   );
+  if (prefs.techFact) await rememberTechFact(text).catch((err) => console.error("[coach] saving the tech fact failed", err));
 
   const display = `☀️ ${text.replace(/^☀️\s*/, "")}`;
   await sendPrompt({
@@ -197,11 +227,13 @@ export async function weeklyReview() {
   const today = dayKey();
   if (isoWeekday(today) !== 7) return;
   const monday = addDays(today, 1);
-  const [thisWeek, nextWeek, events, tasks] = await Promise.all([
+  const [thisWeek, nextWeek, events, tasks, projects, projectDue] = await Promise.all([
     weekProgress(today),
     weekProgress(monday),
     listEvents(zonedDate(monday), zonedDate(addDays(monday, 7))),
     listTasks().catch(() => null),
+    allProgress(7),
+    projectDeadlines(addDays(monday, 6), monday),
   ]);
 
   // Plan the sessions next week still needs; one goal per day where possible.
@@ -235,6 +267,8 @@ export async function weeklyReview() {
   const facts = [
     thisWeek.length ? `This week's goals: ${thisWeek.map(progressLine).join("; ")}` : "No goals set.",
     `Next week busy-ness: ${busyPerDay.join("; ")}`,
+    projects.length ? `GitLab projects this week: ${projects.map(progressSummary).join("; ")}` : "",
+    projectDue.length ? `GitLab deadlines next week: ${projectDue.map((d) => `${d.project}: ${d.title} (${formatDue(d.dueOn, null)})`).join("; ")}` : "",
     `Tasks due next week or overdue: ${dueNextWeek.length ? dueNextWeek.map((t) => `${t.title} (${formatDue(t.dueDay, t.dueTime)})`).join("; ") : "none"}`,
     plan.length ? `Proposed plan for next week: ${plan.map((p) => `${p.title} ${formatSlot(p.slot)}`).join("; ")}` : "",
   ]
@@ -242,7 +276,7 @@ export async function weeklyReview() {
     .join("\n");
   const planLines = plan.map((p) => `- ${p.title} ${formatSlot(p.slot)}`).join("\n");
   const text = await coachText(
-    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 4 sentences.",
+    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on his projects if there is GitLab data (progress, a milestone coming up), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 5 sentences.",
     facts,
     `Weekreview\n${facts}`
   );
