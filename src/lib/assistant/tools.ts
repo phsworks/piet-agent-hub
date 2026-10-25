@@ -20,6 +20,8 @@ import { isCoachPaused, setCoachPaused } from "@/lib/coach/prompts";
 import { addFeedback } from "@/lib/feedback";
 import { allProgress, findProject, progressDetail, progressSummary, projectDeadlines, projectProgress } from "@/lib/gitlab/progress";
 import { GitLabNotConfiguredError } from "@/lib/gitlab/client";
+import { findSchoolItem, isStatus, updateSchoolItem } from "@/lib/school/roadmap";
+import { focusLine, itemForAssistant, schoolPicture, themeLine } from "@/lib/school/priorities";
 
 // Caps keep a single question cheap: a whole document is ~5k tokens at most.
 const READ_MAX_CHARS = 20_000;
@@ -150,6 +152,33 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "school_status",
+    description:
+      "Piet's school roadmap (HvA propedeuse semester 2: side quests and products per theme, which go into Portflow as evidence) and where he stands: status per item (todo, bezig, klaar, in_portflow), progress per theme, a focus suggestion computed from what's started, deadlines in his agenda/TickTick, GitLab activity and lagging themes, and what's done but not yet in Portflow. Use for 'waar moet ik aan werken voor school?', 'wat heb ik nog niet gedaan?', 'hoe sta ik ervoor?'. With item: that side quest or product in full (description, linked products, learning outcomes with their criteria, knowledge, deadline, GitLab activity, evidence). For the full assignment text, use search.",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "Title or part of it, e.g. retrospective, CI/CD." },
+      },
+    },
+  },
+  {
+    name: "update_school_item",
+    description:
+      "Update Piet's progress on a roadmap side quest or product when he says he started, finished or submitted it ('retrospective is af', 'CI/CD staat in Portflow'). Status in_portflow means the evidence is in Portflow. Also stores an evidence link, a note, or match words (words in his GitLab commits/issues that mean he's working on this item).",
+    input_schema: {
+      type: "object",
+      properties: {
+        item: { type: "string", description: "Title or part of it." },
+        status: { type: "string", enum: ["todo", "bezig", "klaar", "in_portflow"] },
+        evidence_url: { type: "string", description: "Link to the evidence (repo file, MR, document)." },
+        note: { type: "string" },
+        match: { type: "array", items: { type: "string" }, description: "Replaces the GitLab match words." },
+      },
+      required: ["item"],
+    },
+  },
+  {
     name: "list_goals",
     description: "Piet's goals and fixed routines (e.g. hardlopen 2× per week) with this week's progress.",
     input_schema: { type: "object", properties: {} },
@@ -205,7 +234,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "coach_settings",
     description:
-      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges.",
+      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders.",
     input_schema: {
       type: "object",
       properties: {
@@ -215,6 +244,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         focus_suggestion: { type: "boolean" },
         tech_fact: { type: "boolean" },
         project_nudges: { type: "boolean", description: "'No commits on Kova in 3 days and a milestone is coming, plan a block?'" },
+        school_nudges: { type: "boolean", description: "School focus in the check-ins and 'done but not in Portflow yet' reminders." },
       },
     },
   },
@@ -264,6 +294,8 @@ export const TOOL_LABELS: Record<string, string> = {
   coach_settings: "Coach instellen…",
   log_feedback: "Feedback noteren…",
   project_progress: "Projecten bekijken…",
+  school_status: "Roadmap bekijken…",
+  update_school_item: "Voortgang bijwerken…",
 };
 
 export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
@@ -422,6 +454,33 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       if (!project) return { error: `No (single) followed project matches "${input.project}". Call without project to see them all.` };
       return { progress: progressDetail(await projectProgress(project, days)) };
     }
+    case "school_status": {
+      const picture = await schoolPicture();
+      if (picture.tracked.length === 0) return { error: "The roadmap hasn't been synced yet." };
+      if (input.item) {
+        const { item, candidates } = await findSchoolItem(String(input.item));
+        if (!item) return { error: `No single match for "${input.item}".`, candidates: candidates.map((c) => c.title) };
+        return { item: itemForAssistant(item, picture) };
+      }
+      return {
+        themes: picture.themes.map(themeLine),
+        focus: picture.focus.map(focusLine),
+        done_not_in_portflow: picture.portflow.map((i) => i.title),
+        items: picture.tracked.map((i) => `${i.title} (${i.kind === "product" ? "product" : "side quest"}, ${i.theme ?? "-"}): ${i.status}`),
+      };
+    }
+    case "update_school_item": {
+      const { item, candidates } = await findSchoolItem(String(input.item ?? ""));
+      if (!item) return { error: `No single match for "${input.item}".`, candidates: candidates.map((c) => c.title) };
+      if (input.status !== undefined && !isStatus(input.status)) return { error: "status must be todo, bezig, klaar or in_portflow" };
+      const updated = await updateSchoolItem(item.id, {
+        status: isStatus(input.status) ? input.status : undefined,
+        evidenceUrl: input.evidence_url === undefined ? undefined : String(input.evidence_url) || null,
+        note: input.note === undefined ? undefined : String(input.note) || null,
+        match: Array.isArray(input.match) ? input.match.map(String) : undefined,
+      });
+      return { updated: updated.title, status: updated.status, evidence_url: updated.evidenceUrl };
+    }
     case "list_goals": {
       const progress = await weekProgress();
       return {
@@ -468,6 +527,7 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       if (typeof input.focus_suggestion === "boolean") changes.focusSuggestion = input.focus_suggestion;
       if (typeof input.tech_fact === "boolean") changes.techFact = input.tech_fact;
       if (typeof input.project_nudges === "boolean") changes.projectNudges = input.project_nudges;
+      if (typeof input.school_nudges === "boolean") changes.schoolNudges = input.school_nudges;
       const prefs = Object.keys(changes).length ? await setCoachPrefs(changes) : await getCoachPrefs();
       return { paused: await isCoachPaused(), ...prefs };
     }

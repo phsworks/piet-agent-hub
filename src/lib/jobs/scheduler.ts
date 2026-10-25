@@ -4,6 +4,8 @@ import { listFeeds, syncFeeds } from "@/lib/calendar/feeds";
 import { syncICloud } from "@/lib/icloud/caldav";
 import { syncGitLab } from "@/lib/gitlab/sync";
 import { coachTick } from "@/lib/coach/nudges";
+import { syncRoadmap } from "@/lib/school/roadmap";
+import { applyGitLabSignals } from "@/lib/school/signals";
 import { BACKUP_STALE_MS, backupsEnabled, lastBackupAt, runBackup } from "./backup";
 
 // Survives dev hot reloads, so jobs are only scheduled once per process.
@@ -11,6 +13,16 @@ const state = ((globalThis as unknown as { __jobs?: { started: boolean } }).__jo
 
 async function syncCalendars() {
   await syncFeeds().catch((err) => console.error("Calendar sync failed", err));
+}
+
+/** GitLab, then what that activity says about the school roadmap. */
+async function syncGitLabAndSchool() {
+  await syncGitLab();
+  await applyGitLabSignals().catch((err) => console.error("[school] GitLab signals failed", err));
+}
+
+async function syncSchool() {
+  await syncRoadmap().catch((err) => console.error("[school] roadmap sync failed", err));
 }
 
 /** Called on server start: schedules recurring jobs and catches up on missed ones. */
@@ -22,16 +34,19 @@ export async function startJobs() {
   // Unchanged iCloud calendars are skipped (ctag), so this is a single request most of the time.
   cron.schedule(`*/${ICLOUD_SYNC_MINUTES} * * * *`, () => syncICloud(), { timezone: TIMEZONE });
   // Incremental (updated_after), so a quiet project costs four small requests.
-  cron.schedule(`*/${GITLAB_SYNC_MINUTES} * * * *`, () => syncGitLab(), { timezone: TIMEZONE });
+  cron.schedule(`*/${GITLAB_SYNC_MINUTES} * * * *`, syncGitLabAndSchool, { timezone: TIMEZONE });
+  // One small request; skipped when the roadmap's export date didn't change.
+  cron.schedule("15 6 * * *", syncSchool, { timezone: TIMEZONE });
   if (backupsEnabled()) cron.schedule("30 3 * * *", runBackup, { timezone: TIMEZONE });
   // Coach check-ins and suggestions; each decides itself whether it's time (see coachTick).
   cron.schedule("*/10 * * * *", () => coachTick().catch((err) => console.error("[coach] tick failed", err)), {
     timezone: TIMEZONE,
   });
 
-  // Catch up: iCloud and GitLab always (cheap), feeds when they went stale while the app was off.
+  // Catch up: iCloud, GitLab and the roadmap always (cheap), feeds when they went stale while the app was off.
   await syncICloud();
-  await syncGitLab();
+  await syncSchool();
+  await syncGitLabAndSchool();
   const staleBefore = Date.now() - CALENDAR_SYNC_HOURS * 3_600_000;
   const feeds = await listFeeds();
   if (feeds.some((f) => !f.lastSyncedAt || Date.parse(f.lastSyncedAt) < staleBefore)) {

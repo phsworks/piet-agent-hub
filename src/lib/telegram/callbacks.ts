@@ -8,6 +8,9 @@ import { isDayPart } from "@/lib/coach/goals";
 import { eveningButtons } from "@/lib/coach/checkins";
 import { focusButtons, focusSlot, focusTitle, type FocusPayload } from "@/lib/coach/focus";
 import { COACH_CALENDAR } from "@/lib/config";
+import { isStatus, updateSchoolItem } from "@/lib/school/roadmap";
+import { STATUS_LABEL } from "@/lib/school/priorities";
+import { statusButtons, type SchoolPayload } from "@/lib/school/nudge";
 import {
   logRoutine,
   planItem,
@@ -36,6 +39,7 @@ export async function handleCallback(query: TelegramCallbackQuery) {
     else if (prompt.kind === "routine") await routine(prompt, action, edit);
     else if (prompt.kind === "weekly") await weekly(prompt, action, edit);
     else if (prompt.kind === "focus") await focus(prompt, action, edit);
+    else if (prompt.kind === "school" || prompt.kind === "school_card") await school(prompt, action, edit);
     else await suggestion(prompt, action, edit);
     await answerCallback(query.id);
   } catch (err) {
@@ -90,6 +94,22 @@ async function suggestion(prompt: CoachPrompt, action: string, edit: Edit) {
   const result = await planItem({ ...payload.item, slot });
   await setPrompt(prompt, { status: "planned" });
   return edit(`${payload.text}\n\n✓ Ingepland: ${payload.item.title}, ${formatSlot(slot)} (${result.calendar})`);
+}
+
+/** Portflow reminder or a /school card: set the item's status. */
+async function school(prompt: CoachPrompt, action: string, edit: Edit) {
+  const payload = prompt.payload as SchoolPayload;
+  if (action === "later") {
+    await setPrompt(prompt, { status: "skipped" });
+    return edit(`${payload.text}\n\n— Later`);
+  }
+  if (!isStatus(action)) return;
+  const item = await updateSchoolItem(payload.itemId, { status: action });
+  if (!item) return edit(`${payload.text}\n\nDit onderdeel staat niet meer in de roadmap.`);
+  await setPrompt(prompt, { status: "done" });
+  const note = `\n\n✓ ${item.title}: ${STATUS_LABEL[action]}`;
+  // A card keeps its buttons so Piet can move on later (bezig → klaar → in Portflow).
+  return edit(`${payload.text}${note}`, prompt.kind === "school_card" && action !== "in_portflow" ? statusButtons(prompt.id, item) : []);
 }
 
 async function routine(prompt: CoachPrompt, action: string, edit: Edit) {

@@ -11,6 +11,7 @@ import { getCoachPrefs } from "./prefs";
 import { goalSuggestion, suggestionPayload, eveningCheck, morningCheckin, weeklyReview } from "./checkins";
 import { ago, lastOwnCommit, milestoneLine, projectDeadlines, projectProgress } from "@/lib/gitlab/progress";
 import { listTrackedProjects } from "@/lib/gitlab/sync";
+import { portflowNudge } from "@/lib/school/nudge";
 import { goalsSuggestedToday, isCoachPaused, keyExists, nudgesToday, sendPrompt, suggestionButtons } from "./prompts";
 
 // Work blocks for deadlines are an hour; Piet can pick another time.
@@ -62,8 +63,9 @@ export async function coachTick() {
 
 /**
  * Event-driven suggestions, in code: a deadline coming up without time
- * reserved for it, a GitLab project going quiet while a milestone is near, or
- * a goal that's falling behind this week. One per check,
+ * reserved for it, a GitLab project going quiet while a milestone is near,
+ * finished school work that isn't in Portflow yet, or a goal that's falling
+ * behind this week. One per check,
  * at most COACH.maxNudgesPerDay per day.
  */
 export async function checkNudges() {
@@ -71,6 +73,7 @@ export async function checkNudges() {
   if ((await nudgesToday()).length >= prefs.maxNudgesPerDay) return;
   if (prefs.deadlineNudges && (await deadlineNudge())) return;
   if (prefs.projectNudges && (await projectNudge())) return;
+  if (prefs.schoolNudges && (await portflowNudge())) return;
   await goalNudge();
 }
 

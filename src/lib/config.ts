@@ -65,6 +65,21 @@ export const COACH = {
   focus: { from: "09:00", until: "22:00", minMinutes: 90, maxMinutes: 120 },
 } as const;
 
+// School roadmap (static site with a roadmap.json); SCHOOL_ROADMAP_URL overrides it.
+export const SCHOOL = {
+  roadmapUrl: process.env.SCHOOL_ROADMAP_URL ?? "https://roadmap-propedeuse-semester-2-a3868e.dev.hihva.nl/",
+  // Items suggested as "work on this" in /school and the morning check-in.
+  focusItems: 3,
+  // GitLab activity this recent moves an item from todo to bezig.
+  signalDays: 14,
+  // "Bezig" without any update for this long counts as stuck.
+  staleDays: 7,
+  // A calendar event or TickTick task naming an item within this many days makes it urgent.
+  deadlineDays: 14,
+  // "Klaar" this long without being in Portflow gets a reminder (once per item per week).
+  portflowAfterDays: 2,
+} as const;
+
 // When a goal "prefers" a part of the day, slots are searched in these windows.
 export const DAY_PARTS = {
   morning: { from: "07:00", until: "11:00" },

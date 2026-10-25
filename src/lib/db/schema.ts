@@ -354,4 +354,40 @@ export const gitlabItems = pgTable(
   ]
 );
 
+export type RoadmapLinks = { products?: string[]; outcomes?: string[]; knowledge?: string[] };
+
+// The school roadmap (HvA roadmap site, roadmap.json), synced daily. Piet's
+// own progress lives in the same row (status, evidence); the sync never
+// touches those columns. Status is tracked for side quests and products, the
+// things that go into Portflow as evidence; the rest is context.
+export const roadmapItems = pgTable(
+  "roadmap_items",
+  {
+    // The roadmap's own id, e.g. "p-ci-cd-8g6p".
+    id: text("id").primaryKey(),
+    // outcome | assignment | side | product | knowledge
+    kind: text("kind").notNull(),
+    title: text("title").notNull(),
+    // Outcome code, e.g. "AA2-2".
+    code: text("code"),
+    // Canvas group: De Teamspeler, De Techneut, ...
+    theme: text("theme"),
+    // For outcomes: their criteria, one per line.
+    description: text("description").notNull().default(""),
+    links: jsonb("links").$type<RoadmapLinks>().notNull().default({}),
+    position: integer("position").notNull().default(0),
+    // todo | bezig | klaar | in_portflow
+    status: text("status").notNull().default("todo"),
+    // manual | gitlab (GitLab only ever moves todo → bezig)
+    statusSource: text("status_source"),
+    statusAt: timestamp("status_at", { withTimezone: true }),
+    evidenceUrl: text("evidence_url"),
+    note: text("note"),
+    // Extra words that link GitLab commits/issues/MRs to this item.
+    match: text("match").array().notNull().default(sql`'{}'::text[]`),
+    syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("roadmap_items_kind_idx").on(table.kind)]
+);
+
 export const vectorExtension = sql`CREATE EXTENSION IF NOT EXISTS vector`;

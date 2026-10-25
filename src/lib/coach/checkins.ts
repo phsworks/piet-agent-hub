@@ -9,6 +9,7 @@ import { findSlots, formatSlot, type Slot } from "./slots";
 import { getSetting, setSetting } from "@/lib/settings";
 import { getCoachPrefs } from "./prefs";
 import { allProgress, progressSummary, projectDeadlines } from "@/lib/gitlab/progress";
+import { schoolFacts, schoolMorningFact, schoolPicture } from "@/lib/school/priorities";
 import {
   claimKey,
   goalsSuggestedToday,
@@ -108,7 +109,7 @@ export function suggestionPayload(text: string, item: PlanItem, p: GoalProgress 
 export async function morningCheckin() {
   const today = dayKey();
   const sunday = addDays(weekStart(today), 6);
-  const [events, tasks, progress, suggested, prefs, recentFacts, projectDue] = await Promise.all([
+  const [events, tasks, progress, suggested, prefs, recentFacts, projectDue, school] = await Promise.all([
     listEvents(zonedDate(today), zonedDate(addDays(today, 1))),
     listTasks().catch(() => null),
     weekProgress(today),
@@ -116,6 +117,7 @@ export async function morningCheckin() {
     getCoachPrefs(),
     getSetting<string[]>(TECH_FACTS_KEY),
     projectDeadlines(addDays(today, COACH_PROJECT_DAYS)),
+    schoolPicture().catch(() => null),
   ]);
   const due = tasks?.filter((t) => t.dueDay && t.dueDay <= today) ?? [];
 
@@ -138,6 +140,7 @@ export async function morningCheckin() {
     tasks === null ? "TickTick not connected." : `Tasks due today or overdue: ${due.length ? due.map((t) => taskLine(t, today)).join("; ") : "none"}`,
     progress.length ? `Goals this week: ${progress.map(progressLine).join("; ")}` : "No goals set.",
     projectDue.length ? `GitLab deadlines soon: ${projectDue.map((d) => `${d.project}: ${d.title} (${formatDue(d.dueOn, null)})`).join("; ")}` : "",
+    school && prefs.schoolNudges ? schoolMorningFact(school) : "",
     suggestion
       ? `Suggestion to plan: ${suggestion.item.title} ${formatSlot(suggestion.item.slot)} (buttons below let him plan it)`
       : "",
@@ -146,7 +149,7 @@ export async function morningCheckin() {
     .join("\n");
   const fallback = `☀️ Goedemorgen!\n${facts}`;
   const text = await coachText(
-    "Write the morning check-in: greet briefly, give the shape of his day in one or two sentences, mention what must not be forgotten, and if there is a suggestion, propose it with the exact time. Max 5 sentences." +
+    "Write the morning check-in: greet briefly, give the shape of his day in one or two sentences, mention what must not be forgotten, if there is a school focus name it in one sentence with its reason (and that he can see more with /school), and if there is a suggestion, propose it with the exact time. Max 6 sentences." +
       (prefs.techFact ? `\n${techFactInstruction(recentFacts ?? [])}` : ""),
     facts,
     fallback
@@ -227,13 +230,15 @@ export async function weeklyReview() {
   const today = dayKey();
   if (isoWeekday(today) !== 7) return;
   const monday = addDays(today, 1);
-  const [thisWeek, nextWeek, events, tasks, projects, projectDue] = await Promise.all([
+  const [thisWeek, nextWeek, events, tasks, projects, projectDue, school, prefs] = await Promise.all([
     weekProgress(today),
     weekProgress(monday),
     listEvents(zonedDate(monday), zonedDate(addDays(monday, 7))),
     listTasks().catch(() => null),
     allProgress(7),
     projectDeadlines(addDays(monday, 6), monday),
+    schoolPicture().catch(() => null),
+    getCoachPrefs(),
   ]);
 
   // Plan the sessions next week still needs; one goal per day where possible.
@@ -269,6 +274,7 @@ export async function weeklyReview() {
     `Next week busy-ness: ${busyPerDay.join("; ")}`,
     projects.length ? `GitLab projects this week: ${projects.map(progressSummary).join("; ")}` : "",
     projectDue.length ? `GitLab deadlines next week: ${projectDue.map((d) => `${d.project}: ${d.title} (${formatDue(d.dueOn, null)})`).join("; ")}` : "",
+    school && prefs.schoolNudges ? schoolFacts(school) : "",
     `Tasks due next week or overdue: ${dueNextWeek.length ? dueNextWeek.map((t) => `${t.title} (${formatDue(t.dueDay, t.dueTime)})`).join("; ") : "none"}`,
     plan.length ? `Proposed plan for next week: ${plan.map((p) => `${p.title} ${formatSlot(p.slot)}`).join("; ")}` : "",
   ]
@@ -276,7 +282,7 @@ export async function weeklyReview() {
     .join("\n");
   const planLines = plan.map((p) => `- ${p.title} ${formatSlot(p.slot)}`).join("\n");
   const text = await coachText(
-    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on his projects if there is GitLab data (progress, a milestone coming up), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 5 sentences.",
+    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on his projects if there is GitLab data (progress, a milestone coming up), one or two sentences on school if there is roadmap data (which theme is behind, what to focus on next week, anything done but not yet in Portflow), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 7 sentences.",
     facts,
     `Weekreview\n${facts}`
   );

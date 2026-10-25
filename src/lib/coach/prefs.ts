@@ -17,6 +17,8 @@ export type CoachPrefs = {
   techFact: boolean;
   /** "No commits on Kova in 3 days and a milestone is coming, plan a block?" */
   projectNudges: boolean;
+  /** "Retrospective is done but not in Portflow yet" and school focus in the check-ins. */
+  schoolNudges: boolean;
 };
 
 const KEY = "coach_prefs";
@@ -27,6 +29,7 @@ export const DEFAULT_PREFS: CoachPrefs = {
   focusSuggestion: true,
   techFact: true,
   projectNudges: true,
+  schoolNudges: true,
 };
 
 export async function getCoachPrefs(): Promise<CoachPrefs> {

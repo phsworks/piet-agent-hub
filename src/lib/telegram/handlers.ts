@@ -14,6 +14,9 @@ import { isCoachPaused, keyExists, setCoachPaused } from "@/lib/coach/prompts";
 import { morningCheckin } from "@/lib/coach/checkins";
 import { dayKey } from "@/lib/dates";
 import { allProgress, findProject, progressDetail, progressSummary, projectProgress } from "@/lib/gitlab/progress";
+import { findSchoolItem } from "@/lib/school/roadmap";
+import { schoolOverview, schoolPicture } from "@/lib/school/priorities";
+import { sendItemCard } from "@/lib/school/nudge";
 import {
   MAX_DOWNLOAD_BYTES,
   downloadFile,
@@ -44,17 +47,19 @@ const HELP = `Stuur me gewoon een bericht:
 - iets om te onthouden: "onthoud dat mijn kluiscode 4821 is"
 - een herinnering: "herinner me vrijdag aan het reflectieverslag" (komt in TickTick)
 - plannen: "plan woensdagavond een uur hardlopen"
+- school: "waar moet ik aan werken?", "retrospective is af", "CI/CD staat in Portflow"
 - een foto, PDF of ander bestand: ik zet het in Drive en maak het doorzoekbaar (een bijschrift helpt bij het opbergen)
 
 - een tech-vraag: "hoe werkt een REST API eigenlijk?", "waarom is mijn query traag?"
 
-Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, ➕ Taak, 📝 Notitie, 🛠 Feedback (iets aan mij dat je stoort).
+Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, 🎓 School, ➕ Taak, 📝 Notitie, 🛠 Feedback (iets aan mij dat je stoort).
 
 Coach: elke ochtend (07:30) een check-in met een tech-feitje, 's avonds (21:00) afvinken, zondag (19:00) een weekreview, en tussendoor een seintje als een deadline nadert of een doel achterloopt. Doelen stel je in door het te zeggen: "ik wil 3× per week hardlopen, 's ochtends".
 
 Commando's:
 /week: de komende 7 dagen (zonder AI, gratis)
 /doelen: je doelen en hoe je ervoor staat
+/school of /school <naam>: je roadmap, waar je nu aan kunt werken en wat nog in Portflow moet; met een naam de details en knoppen om de status te zetten (zonder AI, gratis)
 /project of /project <naam>: voortgang van je GitLab-projecten, bv. /project kova (zonder AI, gratis)
 /coach uit of /coach aan: check-ins en seintjes pauzeren
 /coach nu: de ochtend-check-in nu al (als die vandaag nog niet kwam)
@@ -99,6 +104,7 @@ async function handleText(chatId: number, text: string) {
   if (text === BUTTONS.today) text = "/vandaag";
   else if (text === BUTTONS.week) text = "/week";
   else if (text === BUTTONS.goals) text = "/doelen";
+  else if (text === BUTTONS.school) text = "/school";
   else if (text === BUTTONS.task || text === BUTTONS.note || text === BUTTONS.feedback) {
     const kind: PendingKind = text === BUTTONS.task ? "task" : text === BUTTONS.note ? "note" : "feedback";
     pending = { kind, until: Date.now() + PENDING_MS };
@@ -147,6 +153,8 @@ async function handleText(chatId: number, text: string) {
     case "/project":
     case "/projecten":
       return sendMessage(chatId, await projectsOverview(args));
+    case "/school":
+      return schoolCommand(chatId, args);
     case "/coach": {
       const wanted = args.toLowerCase();
       // Try the check-in now instead of waiting for tomorrow morning.
@@ -203,6 +211,16 @@ async function projectsOverview(name: string) {
   const all = await allProgress();
   if (all.length === 0) return "Nog geen GitLab-projecten gevolgd. Kies ze in Settings.";
   return ["📈 Laatste 7 dagen", ...all.map((p) => `- ${progressSummary(p)}`), "", "Details: /project <naam>"].join("\n");
+}
+
+async function schoolCommand(chatId: number, name: string) {
+  if (!name) return sendMessage(chatId, schoolOverview(await schoolPicture()));
+  const { item, candidates } = await findSchoolItem(name);
+  if (item) return sendItemCard(item);
+  if (candidates.length) {
+    return sendMessage(chatId, `Welke bedoel je?\n${candidates.slice(0, 8).map((c) => `- /school ${c.title}`).join("\n")}`);
+  }
+  return sendMessage(chatId, `Niets gevonden voor "${name}". /school laat alles zien.`);
 }
 
 async function ask(chatId: number, question: string, deep: boolean) {
