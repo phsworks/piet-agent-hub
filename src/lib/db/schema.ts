@@ -347,6 +347,8 @@ export const gitlabItems = pgTable(
     // Merged or closed.
     closedAt: timestamp("closed_at", { withTimezone: true }),
     dueOn: date("due_on", { mode: "string" }),
+    // Milestones only: the first day (sprints are milestones "Sprint 1", ...).
+    startOn: date("start_on", { mode: "string" }),
   },
   (table) => [
     uniqueIndex("gitlab_items_project_type_external_idx").on(table.projectId, table.type, table.externalId),
@@ -388,6 +390,33 @@ export const roadmapItems = pgTable(
     syncedAt: timestamp("synced_at", { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => [index("roadmap_items_kind_idx").on(table.kind)]
+);
+
+// Piet's evidence in Portflow ("Mijn bewijs"), read from screenshots he sends
+// in Telegram (Portflow has no student API). Every screenshot adds to it, so a
+// partial one never removes anything. Collections are the roadmap themes
+// (De Techneut, ...), goals the learning outcomes as codes (OR, PL, AA, MS).
+export const portflowEvidence = pgTable(
+  "portflow_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    name: text("name").notNull(),
+    // file | link | feedback | other (the icon in the Type column)
+    type: text("type").notNull().default("file"),
+    createdOn: date("created_on", { mode: "string" }).notNull(),
+    // 0, 1, …: the same name twice on one day (e.g. one file linked to two collections).
+    copy: integer("copy").notNull().default(0),
+    collections: text("collections").array().notNull().default(sql`'{}'::text[]`),
+    // Outcome codes without the semester number: OR, PL, AA, MS.
+    goals: text("goals").array().notNull().default(sql`'{}'::text[]`),
+    subgoals: text("subgoals").array().notNull().default(sql`'{}'::text[]`),
+    feedbackStatus: text("feedback_status"),
+    // The side quest or product it is evidence for, when the name says so.
+    roadmapItemId: text("roadmap_item_id").references(() => roadmapItems.id, { onDelete: "set null" }),
+    firstSeenAt: timestamp("first_seen_at", { withTimezone: true }).notNull().defaultNow(),
+    lastSeenAt: timestamp("last_seen_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [uniqueIndex("portflow_evidence_name_day_idx").on(table.name, table.createdOn, table.copy)]
 );
 
 export const vectorExtension = sql`CREATE EXTENSION IF NOT EXISTS vector`;

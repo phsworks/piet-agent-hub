@@ -1,9 +1,11 @@
-import { dayKey, weekStart } from "@/lib/dates";
-import { SCHOOL } from "@/lib/config";
+import { addDays, dayKey, weekStart } from "@/lib/dates";
+import { PORTFLOW, SCHOOL } from "@/lib/config";
 import { keyExists, sendPrompt } from "@/lib/coach/prompts";
 import type { InlineButton } from "@/lib/telegram/api";
 import { listTracked, type RoadmapItem } from "./roadmap";
 import { itemDetail, schoolPicture } from "./priorities";
+import { lastImport } from "./portflow";
+import { currentSprints } from "./sprints";
 
 // Buttons under a school message: "c:<prompt id>:<status>" (or "later").
 
@@ -61,4 +63,47 @@ export async function portflowNudge() {
     if (sent) return true;
   }
   return false;
+}
+
+/**
+ * "Stuur even een Portflow-screenshot": in the last days of a sprint when none
+ * came in during its last week, or when the last one is PORTFLOW.staleDays
+ * old. Once per sprint / per week. The buttons open the screenshot wait or
+ * draft the Sprint Review.
+ */
+export async function screenshotReminder() {
+  const today = dayKey();
+  const { current } = await currentSprints(today);
+  const last = await lastImport();
+  const daysLeft = current ? Math.round((Date.parse(current.end) - Date.parse(today)) / 86_400_000) : null;
+
+  let key: string | null = null;
+  let text = "";
+  if (current && current.number > 0 && daysLeft !== null && daysLeft >= 0 && daysLeft <= PORTFLOW.remindDaysBeforeEnd) {
+    const weekBefore = addDays(current.end, -7);
+    if (last && dayKey(last) >= weekBefore) return false;
+    key = `portflow:sprint:${current.number}`;
+    text = `📸 ${current.name} loopt ${daysLeft === 0 ? "vandaag" : daysLeft === 1 ? "morgen" : `over ${daysLeft} dagen`} af. Stuur even een screenshot van Mijn bewijs, dan check ik wat er voor deze sprint nog mist. Zal ik ook je Sprint Review voorbereiden?`;
+  } else if (!last || Date.now() - last.getTime() > PORTFLOW.staleDays * 86_400_000) {
+    // Never sent anything: only once the sprints are known (so it's semester time).
+    if (!current) return false;
+    key = `portflow:stale:${weekStart(today)}`;
+    text = last
+      ? `📸 Je laatste Portflow-screenshot is van ${Math.round((Date.now() - last.getTime()) / 86_400_000)} dagen geleden. Stuur er even een, dan kijk ik wat er mist voor ${current.name}.`
+      : "📸 Stuur eens een screenshot van Mijn bewijs in Portflow, dan houd ik per sprint bij wat er nog mist (retro, sprint review, bewijs per leeruitkomst).";
+  }
+  if (!key || (await keyExists(key))) return false;
+  const sent = await sendPrompt({
+    kind: "portflow",
+    dedupKey: key,
+    text,
+    buttons: (id) => [
+      [
+        { text: "📸 Nu sturen", data: `c:${id}:shots` },
+        { text: "📝 Sprint Review", data: `c:${id}:review` },
+      ],
+      [{ text: "Later", data: `c:${id}:later` }],
+    ],
+  });
+  return Boolean(sent);
 }

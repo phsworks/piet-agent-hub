@@ -10,6 +10,7 @@ import { getSetting, setSetting } from "@/lib/settings";
 import { getCoachPrefs } from "./prefs";
 import { allProgress, progressSummary, projectDeadlines } from "@/lib/gitlab/progress";
 import { schoolFacts, schoolMorningFact, schoolPicture } from "@/lib/school/priorities";
+import { portflowFact, portflowReport } from "@/lib/school/portflow";
 import {
   claimKey,
   goalsSuggestedToday,
@@ -230,7 +231,7 @@ export async function weeklyReview() {
   const today = dayKey();
   if (isoWeekday(today) !== 7) return;
   const monday = addDays(today, 1);
-  const [thisWeek, nextWeek, events, tasks, projects, projectDue, school, prefs] = await Promise.all([
+  const [thisWeek, nextWeek, events, tasks, projects, projectDue, school, prefs, portflow] = await Promise.all([
     weekProgress(today),
     weekProgress(monday),
     listEvents(zonedDate(monday), zonedDate(addDays(monday, 7))),
@@ -239,6 +240,7 @@ export async function weeklyReview() {
     projectDeadlines(addDays(monday, 6), monday),
     schoolPicture().catch(() => null),
     getCoachPrefs(),
+    portflowReport().catch(() => null),
   ]);
 
   // Plan the sessions next week still needs; one goal per day where possible.
@@ -275,6 +277,7 @@ export async function weeklyReview() {
     projects.length ? `GitLab projects this week: ${projects.map(progressSummary).join("; ")}` : "",
     projectDue.length ? `GitLab deadlines next week: ${projectDue.map((d) => `${d.project}: ${d.title} (${formatDue(d.dueOn, null)})`).join("; ")}` : "",
     school && prefs.schoolNudges ? schoolFacts(school) : "",
+    portflow && prefs.portflowReminders ? portflowFact(portflow) : "",
     `Tasks due next week or overdue: ${dueNextWeek.length ? dueNextWeek.map((t) => `${t.title} (${formatDue(t.dueDay, t.dueTime)})`).join("; ") : "none"}`,
     plan.length ? `Proposed plan for next week: ${plan.map((p) => `${p.title} ${formatSlot(p.slot)}`).join("; ")}` : "",
   ]
@@ -282,7 +285,7 @@ export async function weeklyReview() {
     .join("\n");
   const planLines = plan.map((p) => `- ${p.title} ${formatSlot(p.slot)}`).join("\n");
   const text = await coachText(
-    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on his projects if there is GitLab data (progress, a milestone coming up), one or two sentences on school if there is roadmap data (which theme is behind, what to focus on next week, anything done but not yet in Portflow), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 7 sentences.",
+    "Write the Sunday weekly review: one or two sentences on how the goals went this week (honest, encouraging), one sentence on his projects if there is GitLab data (progress, a milestone coming up), one or two sentences on school if there is roadmap data (which theme is behind, what to focus on next week, anything done but not yet in Portflow, and what's missing in Portflow for the current sprint if there is Portflow data, mentioning /portflow), one sentence on what stands out next week (busy days, deadlines). Do NOT list the proposed plan; it is added below your message. Max 7 sentences.",
     facts,
     `Weekreview\n${facts}`
   );

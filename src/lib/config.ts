@@ -80,6 +80,31 @@ export const SCHOOL = {
   portflowAfterDays: 2,
 } as const;
 
+// Portflow evidence, read from screenshots of "Mijn bewijs".
+export const PORTFLOW = {
+  // Sprints are GitLab milestones with this title ("Sprint 1", ...); the
+  // weeks before sprint 1 are the onboarding.
+  sprintPattern: /^sprint\s*(\d+)$/i,
+  onboardingDays: 21,
+  // Every sprint should have these (the roadmap's sprint events); matched on the evidence name.
+  perSprint: [
+    { label: "Retrospective", words: ["retrospective", "retro"] },
+    { label: "Sprint Review", words: ["sprint review", "sprintreview"] },
+    { label: "Coachingsreview", words: ["coaching"] },
+    { label: "Technische review", words: ["technische review", "technical review", "tech review"] },
+  ],
+  // Portflow's goal names → outcome code (without the semester number).
+  goals: { OR: "Ontwerpen & Realiseren", PL: "Persoonlijk Leiderschap", AA: "Analyseren & Adviseren", MS: "Managen & Samenwerken" },
+  // "Stuur een screenshot" this many days before a sprint ends (if none came in that sprint's last week)...
+  remindDaysBeforeEnd: 3,
+  // ...or when the last screenshot is this old.
+  staleDays: 21,
+  // Screenshots sent within this many minutes after /portflow count as Portflow (not Drive).
+  waitMinutes: 10,
+  // The report follows this long after the last screenshot of a batch.
+  reportDelayMs: 15_000,
+} as const;
+
 // When a goal "prefers" a part of the day, slots are searched in these windows.
 export const DAY_PARTS = {
   morning: { from: "07:00", until: "11:00" },

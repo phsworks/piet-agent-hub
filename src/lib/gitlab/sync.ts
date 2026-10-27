@@ -94,6 +94,7 @@ async function upsertItems(items: NewItem[]) {
           milestone: sql`excluded.milestone`,
           closedAt: sql`excluded.closed_at`,
           dueOn: sql`excluded.due_on`,
+          startOn: sql`excluded.start_on`,
         },
       });
   }
@@ -172,6 +173,7 @@ async function syncProject(project: typeof gitlabProjects.$inferSelect) {
         url: m.web_url,
         happenedAt: new Date(m.created_at),
         dueOn: m.due_date,
+        startOn: m.start_date,
       })),
     ]);
     await db.update(gitlabProjects).set({ lastSyncedAt: startedAt, lastError: null }).where(eq(gitlabProjects.id, project.id));

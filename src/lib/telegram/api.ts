@@ -126,6 +126,19 @@ export async function answerCallback(id: string, text?: string) {
   await callTelegram("answerCallbackQuery", { callback_query_id: id, ...(text && { text }) }).catch(() => {});
 }
 
+/** Sends a file (multipart upload), e.g. a generated Markdown document. */
+export async function sendDocument(chatId: number, fileName: string, content: Buffer | string, caption?: string) {
+  const token = botToken();
+  if (!token) throw new Error("TELEGRAM_BOT_TOKEN is not set");
+  const form = new FormData();
+  form.append("chat_id", String(chatId));
+  form.append("document", new Blob([typeof content === "string" ? content : new Uint8Array(content)]), fileName);
+  if (caption) form.append("caption", caption.slice(0, 1024));
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendDocument`, { method: "POST", body: form });
+  const body = (await res.json().catch(() => null)) as { ok: boolean; description?: string } | null;
+  if (!body?.ok) throw new TelegramError(`sendDocument: ${body?.description ?? res.statusText}`, res.status);
+}
+
 export async function sendTyping(chatId: number) {
   await callTelegram("sendChatAction", { chat_id: chatId, action: "typing" }).catch(() => {});
 }

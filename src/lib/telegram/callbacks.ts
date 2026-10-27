@@ -19,7 +19,9 @@ import {
   type SuggestionPayload,
   type WeeklyPayload,
 } from "@/lib/coach/prompts";
-import { answerCallback, editButtons, ownerChatId, type InlineButton, type TelegramCallbackQuery } from "./api";
+import { portflowReport, portflowTips } from "@/lib/school/portflow";
+import { answerCallback, editButtons, ownerChatId, sendMessage, sendTyping, type InlineButton, type TelegramCallbackQuery } from "./api";
+import { expectScreenshots, sendSprintDoc } from "./portflow";
 
 // How many other times "Andere tijd" offers.
 const ALTERNATIVES = 3;
@@ -40,6 +42,7 @@ export async function handleCallback(query: TelegramCallbackQuery) {
     else if (prompt.kind === "weekly") await weekly(prompt, action, edit);
     else if (prompt.kind === "focus") await focus(prompt, action, edit);
     else if (prompt.kind === "school" || prompt.kind === "school_card") await school(prompt, action, edit);
+    else if (prompt.kind === "portflow" || prompt.kind === "portflow_report") await portflow(prompt, action, chatId, edit);
     else await suggestion(prompt, action, edit);
     await answerCallback(query.id);
   } catch (err) {
@@ -110,6 +113,25 @@ async function school(prompt: CoachPrompt, action: string, edit: Edit) {
   const note = `\n\n✓ ${item.title}: ${STATUS_LABEL[action]}`;
   // A card keeps its buttons so Piet can move on later (bezig → klaar → in Portflow).
   return edit(`${payload.text}${note}`, prompt.kind === "school_card" && action !== "in_portflow" ? statusButtons(prompt.id, item) : []);
+}
+
+/** Under a Portflow check or reminder: tips, a sprint document, or "send screenshots now". */
+async function portflow(prompt: CoachPrompt, action: string, chatId: number, edit: Edit) {
+  const { text } = prompt.payload as { text: string };
+  if (action === "later") {
+    await setPrompt(prompt, { status: "skipped" });
+    return edit(`${text}\n\n— Later`);
+  }
+  if (action === "shots") {
+    expectScreenshots();
+    if (prompt.kind === "portflow") await setPrompt(prompt, { status: "done" });
+    return sendMessage(chatId, "📸 Stuur maar: screenshots van Mijn bewijs (meerdere mag). Ik lees ze de komende 10 minuten als Portflow.");
+  }
+  if (action === "review" || action === "retro") return sendSprintDoc(chatId, action);
+  if (action === "tips") {
+    await sendTyping(chatId);
+    return sendMessage(chatId, `💡 ${await portflowTips(await portflowReport())}`);
+  }
 }
 
 async function routine(prompt: CoachPrompt, action: string, edit: Edit) {

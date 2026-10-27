@@ -106,5 +106,6 @@ export type GitLabMilestone = {
   state: "active" | "closed";
   web_url: string;
   created_at: string;
+  start_date: string | null;
   due_date: string | null;
 };

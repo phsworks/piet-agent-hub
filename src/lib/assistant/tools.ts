@@ -21,6 +21,7 @@ import { addFeedback } from "@/lib/feedback";
 import { allProgress, findProject, progressDetail, progressSummary, projectDeadlines, projectProgress } from "@/lib/gitlab/progress";
 import { GitLabNotConfiguredError } from "@/lib/gitlab/client";
 import { findSchoolItem, isStatus, updateSchoolItem } from "@/lib/school/roadmap";
+import { lastImport, portflowReport, reportText } from "@/lib/school/portflow";
 import { focusLine, itemForAssistant, schoolPicture, themeLine } from "@/lib/school/priorities";
 
 // Caps keep a single question cheap: a whole document is ~5k tokens at most.
@@ -163,6 +164,12 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "portflow_check",
+    description:
+      "What's in Piet's Portflow (from the screenshots of 'Mijn bewijs' he sent) and what's missing for the previous and current sprint: the sprint events (Retrospective, Sprint Review, coachingsreview, technical review), evidence per learning outcome (OR, PL, AA, MS) and per theme, pieces without a collection or goal, duplicates, missing feedback. Use for 'wat mist er in mijn Portflow?', 'hoe sta ik ervoor voor sprint 2?'. If there is no data or it's old, tell him to send /portflow with screenshots; for a Sprint Review or Retrospective draft point to /sprintreview and /retro.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
     name: "update_school_item",
     description:
       "Update Piet's progress on a roadmap side quest or product when he says he started, finished or submitted it ('retrospective is af', 'CI/CD staat in Portflow'). Status in_portflow means the evidence is in Portflow. Also stores an evidence link, a note, or match words (words in his GitLab commits/issues that mean he's working on this item).",
@@ -234,7 +241,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "coach_settings",
     description:
-      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders.",
+      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders, no Portflow screenshot reminders.",
     input_schema: {
       type: "object",
       properties: {
@@ -245,6 +252,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         tech_fact: { type: "boolean" },
         project_nudges: { type: "boolean", description: "'No commits on Kova in 3 days and a milestone is coming, plan a block?'" },
         school_nudges: { type: "boolean", description: "School focus in the check-ins and 'done but not in Portflow yet' reminders." },
+        portflow_reminders: { type: "boolean", description: "'Sprint ends soon, send a Portflow screenshot' reminders and Portflow in the weekly review." },
       },
     },
   },
@@ -296,6 +304,7 @@ export const TOOL_LABELS: Record<string, string> = {
   project_progress: "Projecten bekijken…",
   school_status: "Roadmap bekijken…",
   update_school_item: "Voortgang bijwerken…",
+  portflow_check: "Portflow nakijken…",
 };
 
 export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
@@ -469,6 +478,11 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
         items: picture.tracked.map((i) => `${i.title} (${i.kind === "product" ? "product" : "side quest"}, ${i.theme ?? "-"}): ${i.status}`),
       };
     }
+    case "portflow_check": {
+      const report = await portflowReport();
+      const last = await lastImport();
+      return { report: reportText(report), last_screenshot: last ? dayKey(last) : null };
+    }
     case "update_school_item": {
       const { item, candidates } = await findSchoolItem(String(input.item ?? ""));
       if (!item) return { error: `No single match for "${input.item}".`, candidates: candidates.map((c) => c.title) };
@@ -528,6 +542,7 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       if (typeof input.tech_fact === "boolean") changes.techFact = input.tech_fact;
       if (typeof input.project_nudges === "boolean") changes.projectNudges = input.project_nudges;
       if (typeof input.school_nudges === "boolean") changes.schoolNudges = input.school_nudges;
+      if (typeof input.portflow_reminders === "boolean") changes.portflowReminders = input.portflow_reminders;
       const prefs = Object.keys(changes).length ? await setCoachPrefs(changes) : await getCoachPrefs();
       return { paused: await isCoachPaused(), ...prefs };
     }

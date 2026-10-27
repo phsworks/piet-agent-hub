@@ -17,6 +17,7 @@ import { allProgress, findProject, progressDetail, progressSummary, projectProgr
 import { findSchoolItem } from "@/lib/school/roadmap";
 import { schoolOverview, schoolPicture } from "@/lib/school/priorities";
 import { sendItemCard } from "@/lib/school/nudge";
+import { expectScreenshots, handleScreenshot, isPortflowShot, sendReport, sendSprintDoc, stopExpecting } from "./portflow";
 import {
   MAX_DOWNLOAD_BYTES,
   downloadFile,
@@ -49,6 +50,7 @@ const HELP = `Stuur me gewoon een bericht:
 - plannen: "plan woensdagavond een uur hardlopen"
 - school: "waar moet ik aan werken?", "retrospective is af", "CI/CD staat in Portflow"
 - een foto, PDF of ander bestand: ik zet het in Drive en maak het doorzoekbaar (een bijschrift helpt bij het opbergen)
+- Portflow: /portflow en dan screenshots van Mijn bewijs, dan zeg ik wat er per sprint mist
 
 - een tech-vraag: "hoe werkt een REST API eigenlijk?", "waarom is mijn query traag?"
 
@@ -60,6 +62,9 @@ Commando's:
 /week: de komende 7 dagen (zonder AI, gratis)
 /doelen: je doelen en hoe je ervoor staat
 /school of /school <naam>: je roadmap, waar je nu aan kunt werken en wat nog in Portflow moet; met een naam de details en knoppen om de status te zetten (zonder AI, gratis)
+/portflow: daarna screenshots van Mijn bewijs sturen (10 min); zonder screenshots het laatste overzicht met wat er per sprint mist
+/sprintreview [nr] [notities]: concept van de Sprint Review als .md, uit GitLab, agenda en Portflow
+/retro [nr] [notities]: idem voor de Retrospective
 /project of /project <naam>: voortgang van je GitLab-projecten, bv. /project kova (zonder AI, gratis)
 /coach uit of /coach aan: check-ins en seintjes pauzeren
 /coach nu: de ochtend-check-in nu al (als die vandaag nog niet kwam)
@@ -86,7 +91,9 @@ export async function handleMessage(msg: TelegramMessage) {
   if (chatId !== owner) return;
 
   try {
-    if (msg.photo?.length || msg.document) {
+    if (isPortflowShot(msg)) {
+      await handleScreenshot(msg);
+    } else if (msg.photo?.length || msg.document) {
       await handleFile(msg);
     } else if (msg.text) {
       await handleText(chatId, msg.text.trim());
@@ -155,6 +162,23 @@ async function handleText(chatId: number, text: string) {
       return sendMessage(chatId, await projectsOverview(args));
     case "/school":
       return schoolCommand(chatId, args);
+    case "/portflow":
+      if (args.toLowerCase() === "klaar") {
+        stopExpecting();
+        return sendReport(chatId);
+      }
+      expectScreenshots();
+      await sendMessage(
+        chatId,
+        "📸 Stuur nu screenshots van Mijn bewijs in Portflow (meerdere mag, ook als album). Tip: zoom iets in en stuur ze als bestand, dan blijft de tekst scherp. Ik lees ze 10 minuten lang als Portflow."
+      );
+      return sendReport(chatId, undefined, { skipEmpty: true });
+    case "/sprintreview":
+    case "/review":
+      return sendSprintDoc(chatId, "review", args);
+    case "/retro":
+    case "/retrospective":
+      return sendSprintDoc(chatId, "retro", args);
     case "/coach": {
       const wanted = args.toLowerCase();
       // Try the check-in now instead of waiting for tomorrow morning.

@@ -19,6 +19,8 @@ export type CoachPrefs = {
   projectNudges: boolean;
   /** "Retrospective is done but not in Portflow yet" and school focus in the check-ins. */
   schoolNudges: boolean;
+  /** "Sprint 2 ends Friday, send a Portflow screenshot" and the Portflow line in the weekly review. */
+  portflowReminders: boolean;
 };
 
 const KEY = "coach_prefs";
@@ -30,6 +32,7 @@ export const DEFAULT_PREFS: CoachPrefs = {
   techFact: true,
   projectNudges: true,
   schoolNudges: true,
+  portflowReminders: true,
 };
 
 export async function getCoachPrefs(): Promise<CoachPrefs> {
