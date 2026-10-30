@@ -17,7 +17,7 @@ import { allProgress, findProject, progressDetail, progressSummary, projectProgr
 import { findSchoolItem } from "@/lib/school/roadmap";
 import { schoolOverview, schoolPicture } from "@/lib/school/priorities";
 import { sendItemCard } from "@/lib/school/nudge";
-import { expectScreenshots, handleScreenshot, isPortflowShot, sendReport, sendSprintDoc, stopExpecting } from "./portflow";
+import { expectScreenshots, handleScreenshot, isPortflowShot, sendGaps, sendReport, sendSprintDoc, stopExpecting } from "./portflow";
 import {
   MAX_DOWNLOAD_BYTES,
   downloadFile,
@@ -54,7 +54,7 @@ const HELP = `Stuur me gewoon een bericht:
 
 - een tech-vraag: "hoe werkt een REST API eigenlijk?", "waarom is mijn query traag?"
 
-Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, 🎓 School, ➕ Taak, 📝 Notitie, 🛠 Feedback (iets aan mij dat je stoort).
+Knoppen onderin: 📅 Vandaag, 🗓 Week, 🎯 Doelen, 🎓 School, 📎 Portflow (wat er nu mist), ➕ Taak, 📝 Notitie, 🛠 Feedback (iets aan mij dat je stoort).
 
 Coach: elke ochtend (07:30) een check-in met een tech-feitje, 's avonds (21:00) afvinken, zondag (19:00) een weekreview, en tussendoor een seintje als een deadline nadert of een doel achterloopt. Doelen stel je in door het te zeggen: "ik wil 3× per week hardlopen, 's ochtends".
 
@@ -63,6 +63,7 @@ Commando's:
 /doelen: je doelen en hoe je ervoor staat
 /school of /school <naam>: je roadmap, waar je nu aan kunt werken en wat nog in Portflow moet; met een naam de details en knoppen om de status te zetten (zonder AI, gratis)
 /portflow: daarna screenshots van Mijn bewijs sturen (10 min); zonder screenshots het laatste overzicht met wat er per sprint mist
+/mist: wat er nu in je Portflow mist, gekeken naar datum, sprint, agenda, roadmap en GitLab (1 AI-call)
 /sprintreview [nr] [notities]: concept van de Sprint Review als .md, uit GitLab, agenda en Portflow
 /retro [nr] [notities]: idem voor de Retrospective
 /project of /project <naam>: voortgang van je GitLab-projecten, bv. /project kova (zonder AI, gratis)
@@ -112,6 +113,7 @@ async function handleText(chatId: number, text: string) {
   else if (text === BUTTONS.week) text = "/week";
   else if (text === BUTTONS.goals) text = "/doelen";
   else if (text === BUTTONS.school) text = "/school";
+  else if (text === BUTTONS.portflow) text = "/mist";
   else if (text === BUTTONS.task || text === BUTTONS.note || text === BUTTONS.feedback) {
     const kind: PendingKind = text === BUTTONS.task ? "task" : text === BUTTONS.note ? "note" : "feedback";
     pending = { kind, until: Date.now() + PENDING_MS };
@@ -173,6 +175,8 @@ async function handleText(chatId: number, text: string) {
         "📸 Stuur nu screenshots van Mijn bewijs in Portflow (meerdere mag, ook als album). Tip: zoom iets in en stuur ze als bestand, dan blijft de tekst scherp. Ik lees ze 10 minuten lang als Portflow."
       );
       return sendReport(chatId, undefined, { skipEmpty: true });
+    case "/mist":
+      return sendGaps(chatId);
     case "/sprintreview":
     case "/review":
       return sendSprintDoc(chatId, "review", args);

@@ -10,13 +10,14 @@ export const BUTTONS = {
   note: "📝 Notitie",
   goals: "🎯 Doelen",
   school: "🎓 School",
+  portflow: "📎 Portflow",
   feedback: "🛠 Feedback",
 } as const;
 
 export const MAIN_KEYBOARD = {
   keyboard: [
     [{ text: BUTTONS.today }, { text: BUTTONS.week }, { text: BUTTONS.goals }, { text: BUTTONS.school }],
-    [{ text: BUTTONS.task }, { text: BUTTONS.note }, { text: BUTTONS.feedback }],
+    [{ text: BUTTONS.portflow }, { text: BUTTONS.task }, { text: BUTTONS.note }, { text: BUTTONS.feedback }],
   ],
   resize_keyboard: true,
   is_persistent: true,
@@ -25,11 +26,11 @@ export const MAIN_KEYBOARD = {
 
 const VERSION_KEY = "telegram_keyboard_version";
 // Bump when the buttons change, so Piet gets the new keyboard once.
-const KEYBOARD_VERSION = 4;
+const KEYBOARD_VERSION = 5;
 
 /** Sends the keyboard once per version; Telegram keeps showing it after that. */
 export async function ensureKeyboard() {
   if ((await getSetting<number>(VERSION_KEY)) === KEYBOARD_VERSION) return;
-  await notifyOwner("Nieuwe knop: 🎓 School. Je roadmap per thema, waar je nu het best aan kunt werken, en wat klaar is maar nog in Portflow moet. Status bijwerken kan met de knoppen onder /school <naam>, of zeg gewoon \"retrospective is af\".", MAIN_KEYBOARD);
+  await notifyOwner("Nieuwe knop: 📎 Portflow. Een lijst van wat er nu in je Portflow mist, op basis van de datum, je sprint, je agenda, je roadmap en wat je in GitLab hebt gedaan. Nieuwe screenshots sturen kan met de knop onder de lijst.", MAIN_KEYBOARD);
   await setSetting(VERSION_KEY, KEYBOARD_VERSION);
 }

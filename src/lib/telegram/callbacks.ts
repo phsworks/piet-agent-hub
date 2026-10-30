@@ -21,7 +21,7 @@ import {
 } from "@/lib/coach/prompts";
 import { portflowReport, portflowTips } from "@/lib/school/portflow";
 import { answerCallback, editButtons, ownerChatId, sendMessage, sendTyping, type InlineButton, type TelegramCallbackQuery } from "./api";
-import { expectScreenshots, sendSprintDoc } from "./portflow";
+import { expectScreenshots, sendReport, sendSprintDoc } from "./portflow";
 
 // How many other times "Andere tijd" offers.
 const ALTERNATIVES = 3;
@@ -128,6 +128,7 @@ async function portflow(prompt: CoachPrompt, action: string, chatId: number, edi
     return sendMessage(chatId, "📸 Stuur maar: screenshots van Mijn bewijs (meerdere mag). Ik lees ze de komende 10 minuten als Portflow.");
   }
   if (action === "review" || action === "retro") return sendSprintDoc(chatId, action);
+  if (action === "report") return sendReport(chatId);
   if (action === "tips") {
     await sendTyping(chatId);
     return sendMessage(chatId, `💡 ${await portflowTips(await portflowReport())}`);

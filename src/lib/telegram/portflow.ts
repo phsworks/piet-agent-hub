@@ -2,6 +2,7 @@ import { PORTFLOW } from "@/lib/config";
 import { dayKey } from "@/lib/dates";
 import { sendPrompt } from "@/lib/coach/prompts";
 import { importEvidence, portflowReport, readScreenshot, reportText } from "@/lib/school/portflow";
+import { portflowGaps } from "@/lib/school/portflow-gaps";
 import { draftSprintDoc, pickSprint, SPRINT_DOC_LABEL, type SprintDocKind } from "@/lib/school/sprint-doc";
 import { downloadFile, sendDocument, sendMessage, sendTyping, type InlineButton, type TelegramMessage } from "./api";
 
@@ -84,6 +85,26 @@ export async function sendReport(chatId: number, batch?: { read: number; added: 
   if (report.total === 0) return sendMessage(chatId, text);
   // Unique key: every report is its own prompt, so older buttons keep working.
   await sendPrompt({ kind: "portflow_report", dedupKey: `portflow_report:${Date.now()}`, text, buttons: reportButtons });
+}
+
+function gapsButtons(id: string): InlineButton[][] {
+  return [
+    [
+      { text: "📸 Nieuwe screenshots", data: `c:${id}:shots` },
+      { text: "📊 Hele check", data: `c:${id}:report` },
+    ],
+    [
+      { text: "📝 Sprint Review", data: `c:${id}:review` },
+      { text: "🔁 Retrospective", data: `c:${id}:retro` },
+    ],
+  ];
+}
+
+/** 📎 Portflow and /mist: what's missing right now, as one list. */
+export async function sendGaps(chatId: number) {
+  await sendTyping(chatId);
+  const text = await portflowGaps();
+  await sendPrompt({ kind: "portflow_report", dedupKey: `portflow_gaps:${Date.now()}`, text, buttons: gapsButtons });
 }
 
 /** /sprintreview [n] [notes] and /retro [n] [notes]: a first draft as a .md file. */

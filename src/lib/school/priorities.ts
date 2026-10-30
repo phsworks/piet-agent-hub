@@ -19,7 +19,7 @@ export const STATUS_LABEL: Record<SchoolStatus, string> = {
 
 // Calendar events only count as a deadline when they look like one; a weekly
 // lesson that happens to share a word with an item doesn't.
-const DEADLINE_WORDS = /deadline|inlever|oplever|assessment|beoordel|review|presentatie|pitch|demo|dragon/i;
+export const DEADLINE_WORDS = /deadline|inlever|oplever|assessment|beoordel|review|presentatie|pitch|demo|dragon/i;
 
 export type ThemeProgress = { theme: string; done: number; inPortflow: number; total: number };
 export type Deadline = { day: string; title: string };
