@@ -193,6 +193,10 @@ export type PortflowReport = {
 };
 
 const has = (e: Evidence, phrases: readonly string[]) => phrases.some((p) => words(e.name).includes(words(p)));
+// Feedback shows up three ways: a feedback status, a feedback piece of its own
+// (red icon, e.g. a coaching review), or a teacher's assessment uploaded as a file.
+const FEEDBACK_WORDS = ["feedback", "beoordeling", "coaching", "technische review", "tech review"];
+const hasFeedback = (e: Evidence) => Boolean(e.feedbackStatus) || e.type === "feedback" || has(e, FEEDBACK_WORDS);
 
 function sprintOf(e: Evidence, sprints: Sprint[]) {
   const named = sprintInName(e.name);
@@ -242,7 +246,7 @@ export async function portflowReport(today = dayKey()): Promise<PortflowReport> 
     noCollection: semester.filter((e) => e.collections.length === 0),
     noGoal: semester.filter((e) => e.goals.length === 0),
     duplicates: [...counts.values()].filter((d) => d.count > 1),
-    withoutFeedback: semester.filter((e) => !e.feedbackStatus).length,
+    withoutFeedback: semester.filter((e) => !hasFeedback(e)).length,
     waiting: tracked.filter((t) => t.status === "klaar").map((t) => t.title),
   };
 }

@@ -79,7 +79,10 @@ export async function untrackProject(gitlabId: number) {
   await db.delete(gitlabProjects).where(eq(gitlabProjects.gitlabId, gitlabId));
 }
 
-async function upsertItems(items: NewItem[]) {
+async function upsertItems(all: NewItem[]) {
+  // GitLab pages can repeat an item (a commit on several branches with all=true);
+  // Postgres refuses an upsert that touches the same row twice, so the last copy wins.
+  const items = [...new Map(all.map((it) => [`${it.type}|${it.externalId}`, it])).values()];
   for (let i = 0; i < items.length; i += INSERT_CHUNK) {
     await db
       .insert(gitlabItems)
