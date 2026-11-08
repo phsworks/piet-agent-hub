@@ -419,4 +419,19 @@ export const portflowEvidence = pgTable(
   (table) => [uniqueIndex("portflow_evidence_name_day_idx").on(table.name, table.createdOn, table.copy)]
 );
 
+// Documents the assistant wrote on request (create_document, /maak). They live
+// as Google Docs in /PietBrain/Gemaakt/<folder>; this row keeps the link and
+// the roadmap item they're for, so Piet (and the Portflow check) can find them.
+export const documents = pgTable("documents", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  title: text("title").notNull(),
+  // School | Werk | Overig: the subfolder under /PietBrain/Gemaakt.
+  folder: text("folder").notNull(),
+  request: text("request").notNull(),
+  driveFileId: text("drive_file_id").notNull(),
+  driveUrl: text("drive_url"),
+  roadmapItemId: text("roadmap_item_id").references(() => roadmapItems.id, { onDelete: "set null" }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
 export const vectorExtension = sql`CREATE EXTENSION IF NOT EXISTS vector`;

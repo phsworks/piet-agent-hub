@@ -128,7 +128,10 @@ export async function schoolPicture(): Promise<SchoolPicture> {
 }
 
 export const themeLine = (t: ThemeProgress) => `${t.theme} ${t.done}/${t.total}${t.inPortflow ? ` (${t.inPortflow} in Portflow)` : ""}`;
-const kindLabel = (i: RoadmapItem) => (i.kind === "product" ? "product" : "side-quest");
+const KIND_LABELS: Record<string, string> = { product: "product", side: "side-quest", assignment: "opdracht", knowledge: "kennisartikel", outcome: "leeruitkomst" };
+const kindLabel = (i: RoadmapItem) => KIND_LABELS[i.kind] ?? i.kind;
+// Enough for a whole assignment or knowledge article (most are 2–4k characters).
+const ITEM_TEXT_CHARS = 6000;
 export const focusLine = (f: FocusItem) => `${f.item.title} (${kindLabel(f.item)}): ${f.reasons.join(", ") || "nog niet begonnen"}`;
 
 /** Facts for the coach's morning check-in and Sunday review. */
@@ -202,7 +205,7 @@ export function itemForAssistant(item: RoadmapItem, p: SchoolPicture) {
     kind: kindLabel(item),
     theme: item.theme,
     status: item.status,
-    description: item.description.slice(0, 1500),
+    description: item.description.slice(0, ITEM_TEXT_CHARS),
     products: (item.links.products ?? []).map((id) => byId.get(id)).filter(Boolean).map((i) => `${i!.title}: ${i!.status}`),
     made_in: item.kind === "product" ? p.all.filter((a) => a.links.products?.includes(item.id)).map((a) => a.title) : undefined,
     outcomes: (item.links.outcomes ?? []).map((id) => byId.get(id)).filter(Boolean).map((o) => ({ outcome: `${o!.code} ${o!.title}`, criteria: o!.description })),

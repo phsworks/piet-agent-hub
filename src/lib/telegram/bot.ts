@@ -40,6 +40,7 @@ const COMMANDS = [
   { command: "coach", description: "Coach aan/uit (bv. in de vakantie)" },
   { command: "t", description: "Snel een taak in TickTick (bv. /t morgen 9:00 mail docent)" },
   { command: "n", description: "Notitie opslaan" },
+  { command: "maak", description: "Document schrijven (Google Doc in Drive)" },
   { command: "uitleg", description: "Tech-uitleg (bv. /uitleg hoe werkt OAuth)" },
   { command: "fb", description: "Feedback over de bot of coach" },
   { command: "diep", description: "Lastige vraag (zwaarder model)" },

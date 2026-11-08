@@ -72,6 +72,7 @@ Commando's:
 /t <taak>: meteen in TickTick, bv. /t morgen 9:00 mail docent (zonder AI, gratis)
 /vandaag: je afspraken en taken van vandaag (zonder AI, gratis)
 /n <tekst>: meteen opslaan als notitie (zonder AI, gratis)
+/maak <opdracht>: schrijft een document als Google Doc in Drive › PietBrain › Gemaakt, bv. /maak plan van aanpak voor de API-opdracht
 /uitleg <onderwerp>: tech-uitleg, bv. /uitleg hoe werkt OAuth
 /fb <tekst>: feedback over de bot of coach (wat kan, pas ik meteen aan)
 /diep <vraag>: zwaarder model voor lastige vragen
@@ -205,6 +206,9 @@ async function handleText(chatId: number, text: string) {
       if (!args) return sendMessage(chatId, "Gebruik: /fb <wat je stoort of anders wilt>");
       // Via the assistant: it applies what a setting can fix and logs the rest.
       return ask(chatId, `Feedback over de hub: ${args}`, false);
+    case "/maak":
+      if (!args) return sendMessage(chatId, "Gebruik: /maak <opdracht>, bv. /maak reflectie op sprint 3 voor PL");
+      return ask(chatId, `Maak een document (create_document): ${args}`, false);
     case "/uitleg":
       if (!args) return sendMessage(chatId, "Gebruik: /uitleg <onderwerp>, bv. /uitleg hoe werkt OAuth");
       return ask(chatId, `Leg uit als mijn development buddy: ${args}`, false);

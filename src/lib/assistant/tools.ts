@@ -23,6 +23,7 @@ import { GitLabNotConfiguredError } from "@/lib/gitlab/client";
 import { findSchoolItem, isStatus, updateSchoolItem } from "@/lib/school/roadmap";
 import { lastImport, portflowReport, reportText } from "@/lib/school/portflow";
 import { focusLine, itemForAssistant, schoolPicture, themeLine } from "@/lib/school/priorities";
+import { createDocument, DOCUMENT_FOLDERS, isDocumentFolder } from "@/lib/documents/create";
 
 // Caps keep a single question cheap: a whole document is ~5k tokens at most.
 const READ_MAX_CHARS = 20_000;
@@ -155,7 +156,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "school_status",
     description:
-      "Piet's school roadmap (HvA propedeuse semester 2: side quests and products per theme, which go into Portflow as evidence) and where he stands: status per item (todo, bezig, klaar, in_portflow), progress per theme, a focus suggestion computed from what's started, deadlines in his agenda/TickTick, GitLab activity and lagging themes, and what's done but not yet in Portflow. Use for 'waar moet ik aan werken voor school?', 'wat heb ik nog niet gedaan?', 'hoe sta ik ervoor?'. With item: that side quest or product in full (description, linked products, learning outcomes with their criteria, knowledge, deadline, GitLab activity, evidence). For the full assignment text, use search.",
+      "Piet's school roadmap (HvA propedeuse semester 2: side quests and products per theme, which go into Portflow as evidence) and where he stands: status per item (todo, bezig, klaar, in_portflow), progress per theme, a focus suggestion computed from what's started, deadlines in his agenda/TickTick, GitLab activity and lagging themes, and what's done but not yet in Portflow. Use for 'waar moet ik aan werken voor school?', 'wat heb ik nog niet gedaan?', 'hoe sta ik ervoor?'. With item: any roadmap item in full: a side quest, product or assignment (text, linked products, learning outcomes with their criteria, knowledge articles, deadline, GitLab activity, evidence), a knowledge article (the HvA explanation, e.g. 'Abstractie in software'; use it for school-related tech questions) or a learning outcome with its criteria.",
     input_schema: {
       type: "object",
       properties: {
@@ -271,6 +272,22 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
     },
   },
   {
+    name: "create_document",
+    description:
+      "Write a document for Piet and save it as a Google Doc in /PietBrain/Gemaakt/<folder>: a plan van aanpak, reflection, onderbouwing, report, summary, letter, README, ... Use when he asks you to make or write something he'll keep, hand in or put in Portflow ('maak een reflectie op sprint 3', 'schrijf een plan van aanpak voor de API-opdracht'). It reads his notes and files and, with item, the roadmap assignment with its learning-outcome criteria. Pass in extra anything relevant you already know from the conversation. Takes about half a minute. Reply with the link, the folder, and how many [aanvullen] spots he still has to fill in.",
+    input_schema: {
+      type: "object",
+      properties: {
+        request: { type: "string", description: "What to write, in Piet's words plus anything he specified (length, audience, structure)." },
+        title: { type: "string", description: "Short file title, e.g. 'Plan van aanpak API-opdracht'." },
+        folder: { type: "string", enum: [...DOCUMENT_FOLDERS], description: "School for anything HvA, Werk for his job, Overig otherwise." },
+        item: { type: "string", description: "Roadmap side quest or product it's for (title or part), if any." },
+        extra: { type: "string", description: "Relevant facts from this conversation or earlier tool results." },
+      },
+      required: ["request", "title", "folder"],
+    },
+  },
+  {
     name: "save_note",
     description:
       "Save a note or fact so Piet can find it later (e.g. 'onthoud dat…', a locker code, a decision, an idea). Similar existing notes are updated instead of duplicated.",
@@ -305,6 +322,7 @@ export const TOOL_LABELS: Record<string, string> = {
   school_status: "Roadmap bekijken…",
   update_school_item: "Voortgang bijwerken…",
   portflow_check: "Portflow nakijken…",
+  create_document: "Document schrijven…",
 };
 
 export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
@@ -467,7 +485,7 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       const picture = await schoolPicture();
       if (picture.tracked.length === 0) return { error: "The roadmap hasn't been synced yet." };
       if (input.item) {
-        const { item, candidates } = await findSchoolItem(String(input.item));
+        const { item, candidates } = await findSchoolItem(String(input.item), true);
         if (!item) return { error: `No single match for "${input.item}".`, candidates: candidates.map((c) => c.title) };
         return { item: itemForAssistant(item, picture) };
       }
@@ -556,6 +574,16 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
         source,
       });
       return { saved: true, status: row.status };
+    }
+    case "create_document": {
+      const folder = isDocumentFolder(input.folder) ? input.folder : "Overig";
+      return createDocument({
+        request: String(input.request ?? ""),
+        title: String(input.title ?? "Document").slice(0, 120),
+        folder,
+        item: input.item ? String(input.item) : null,
+        extra: input.extra ? String(input.extra) : null,
+      });
     }
     case "save_note": {
       const result = await saveMemory({ content: String(input.content ?? ""), category: "note", source });

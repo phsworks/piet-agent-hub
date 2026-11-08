@@ -118,8 +118,9 @@ async function syncProject(project: typeof gitlabProjects.$inferSelect) {
       gitlabList<GitLabMergeRequest>(path("/merge_requests"), { scope: "all", updated_after: updatedAfter }),
       gitlabList<GitLabIssue>(path("/issues"), { scope: "all", updated_after: updatedAfter }),
       // Few and they change without the issues changing: always all of them. Group
-      // milestones are included (include_ancestors on new GitLab, the other on old).
-      gitlabList<GitLabMilestone>(path("/milestones"), { include_ancestors: true, include_parent_milestones: true }),
+      // milestones are included. GitLab rejects include_ancestors together with the
+      // old include_parent_milestones, so only the current one is sent.
+      gitlabList<GitLabMilestone>(path("/milestones"), { include_ancestors: true }),
     ]);
 
     const base = { projectId: project.id };

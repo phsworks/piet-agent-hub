@@ -14,7 +14,7 @@ Piet is an HBO-ICT student (HvA), working as an AI developer, with several side 
 - node-cron for jobs, with catch-up on startup. Secrets in `.env.local`. npm.
 
 ## Core concepts
-1. **One assistant** (`src/lib/assistant/`): tools search, drive_search, read_document, list_deadlines, create_reminder, save_note. Short history (`ASSISTANT_HISTORY_MESSAGES`), plain-text answers in Dutch. No memory extraction after every reply: notes are saved only on request (`save_note`, or `/n` without AI).
+1. **One assistant** (`src/lib/assistant/`): tools search, drive_search, read_document, list_deadlines, create_reminder, save_note, create_document (`src/lib/documents/create.ts`: one DEEP_MODEL call grounded in notes, files and the roadmap item → Google Doc from Markdown in Drive /PietBrain/Gemaakt/School|Werk|Overig, logged in `documents`, item todo → bezig; Telegram `/maak`). Short history (`ASSISTANT_HISTORY_MESSAGES`), plain-text answers in Dutch. No memory extraction after every reply: notes are saved only on request (`save_note`, or `/n` without AI).
 2. **Telegram** (`src/lib/telegram/`): text → assistant; photo/document → file pipeline (caption = note) → message once it's filed; commands /n, /diep, /nieuw, /help. Only answers `TELEGRAM_CHAT_ID`.
 3. **Files**: the `agents` table is now just the **folder tree** (School › Semester 3 › project, Work, ...). The worker classifies each file (Haiku), uploads it to Drive, extracts the text and embeds it.
 4. **Calendar**: iCal feeds (iCloud timetable, later Brightspace) → `calendar_events`.

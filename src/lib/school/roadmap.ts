@@ -5,9 +5,14 @@ import { getSetting, setSetting } from "@/lib/settings";
 import { SCHOOL } from "@/lib/config";
 
 // The roadmap site is a static app that loads one roadmap.json; everything we
-// need (titles, themes, links between items) is in there. No AI involved.
+// need (titles, themes, links between items) is in there, except the knowledge
+// articles' text, which sits next to it as one .md per article. No AI involved.
 
 const EXPORTED_KEY = "school_roadmap_exported_at";
+// Bumped when the sync reads more of the export, so the next run refetches even if the export didn't change.
+const SYNC_VERSION = "2";
+// The knowledge articles are small static files; a few at a time is gentle on the site.
+const ARTICLE_BATCH = 8;
 
 export type RoadmapItem = typeof roadmapItems.$inferSelect;
 export type SchoolStatus = "todo" | "bezig" | "klaar" | "in_portflow";
@@ -22,7 +27,7 @@ type RoadmapJson = {
   outcomes: { id: string; code: string; title: string; criteria: { label: string; description: string }[] }[];
   assignments: { id: string; kind: string; title: string; desc: string; products: string[]; outcomes: string[]; knowledge: string[] }[];
   products: { id: string; title: string; desc: string; outcomes: string[]; knowledge: string[] }[];
-  knowledge: { id: string; title: string; desc: string }[];
+  knowledge: { id: string; title: string; desc: string; location?: string | null }[];
   canvas: { positions: Record<string, { container_id: string | null }>; containers: { id: string; title: string }[] };
 };
 
@@ -31,7 +36,9 @@ export async function syncRoadmap(force = false) {
   const res = await fetch(new URL("roadmap.json", SCHOOL.roadmapUrl), { cache: "no-store" });
   if (!res.ok) throw new Error(`roadmap.json: HTTP ${res.status}`);
   const data = (await res.json()) as RoadmapJson;
-  if (!force && (await getSetting<string>(EXPORTED_KEY)) === data.exported_at) return { changed: false, items: 0 };
+  const version = `${data.exported_at}|${SYNC_VERSION}`;
+  if (!force && (await getSetting<string>(EXPORTED_KEY)) === version) return { changed: false, items: 0 };
+  const articles = await fetchArticles(data.knowledge);
 
   const containers = new Map(data.canvas.containers.map((c) => [c.id, c.title]));
   const theme = (id: string) => containers.get(data.canvas.positions[id]?.container_id ?? "") ?? null;
@@ -64,7 +71,7 @@ export async function syncRoadmap(force = false) {
       description: p.desc ?? "",
       links: { outcomes: p.outcomes, knowledge: p.knowledge } satisfies RoadmapLinks,
     })),
-    ...data.knowledge.map((k) => ({ id: k.id, kind: "knowledge", title: k.title, code: null, theme: null, description: k.desc ?? "", links: {} })),
+    ...data.knowledge.map((k) => ({ id: k.id, kind: "knowledge", title: k.title, code: null, theme: null, description: articles.get(k.id) || k.desc || "", links: {} })),
   ].map((r, position) => ({ ...r, position }));
 
   await db.transaction(async (tx) => {
@@ -91,9 +98,26 @@ export async function syncRoadmap(force = false) {
         )
       );
   });
-  await setSetting(EXPORTED_KEY, data.exported_at);
-  console.log(`[school] roadmap synced: ${rows.length} items (export ${data.exported_at})`);
+  await setSetting(EXPORTED_KEY, version);
+  console.log(`[school] roadmap synced: ${rows.length} items, ${articles.size}/${data.knowledge.length} knowledge articles (export ${data.exported_at})`);
   return { changed: true, items: rows.length };
+}
+
+/** The knowledge articles' Markdown (without front matter), by item id. A missing article just stays empty. */
+async function fetchArticles(knowledge: RoadmapJson["knowledge"]) {
+  const texts = new Map<string, string>();
+  const withFile = knowledge.filter((k) => k.location);
+  for (let i = 0; i < withFile.length; i += ARTICLE_BATCH) {
+    await Promise.all(
+      withFile.slice(i, i + ARTICLE_BATCH).map(async (k) => {
+        const res = await fetch(new URL(k.location!, SCHOOL.roadmapUrl), { cache: "no-store" }).catch(() => null);
+        if (!res?.ok) return;
+        const text = (await res.text()).replace(/^---\n[\s\S]*?\n---\n/, "").replace(/\]\(ARTICLE_LINK\)/g, "]").trim();
+        if (text) texts.set(k.id, text);
+      })
+    );
+  }
+  return texts;
 }
 
 export async function listRoadmap() {
@@ -105,16 +129,18 @@ export async function listTracked() {
 }
 
 /**
- * A side quest or product by (part of) its title. An exact title wins; with
- * several partial matches the caller gets them all to ask which one.
+ * A side quest or product (or, with anyKind, any roadmap item: assignments,
+ * knowledge articles, outcomes) by (part of) its title. An exact title wins;
+ * with several partial matches the caller gets them all to ask which one.
  */
-export async function findSchoolItem(query: string): Promise<{ item: RoadmapItem | null; candidates: RoadmapItem[] }> {
+export async function findSchoolItem(query: string, anyKind = false): Promise<{ item: RoadmapItem | null; candidates: RoadmapItem[] }> {
   const q = query.trim();
   if (!q) return { item: null, candidates: [] };
+  const title = ilike(roadmapItems.title, `%${q}%`);
   const rows = await db
     .select()
     .from(roadmapItems)
-    .where(and(inArray(roadmapItems.kind, TRACKED_KINDS), ilike(roadmapItems.title, `%${q}%`)))
+    .where(anyKind ? title : and(inArray(roadmapItems.kind, TRACKED_KINDS), title))
     .orderBy(asc(roadmapItems.position));
   const exact = rows.find((r) => r.title.toLowerCase() === q.toLowerCase());
   return { item: exact ?? (rows.length === 1 ? rows[0] : null), candidates: rows };

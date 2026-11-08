@@ -143,13 +143,15 @@ export async function uploadToDrive(opts: {
   return toDriveFile(res.data);
 }
 
-/** A folder directly under /PietBrain (e.g. "Backups"), created on first use. */
-export async function ensureRootSubfolder(name: string) {
+/** A folder under /PietBrain (e.g. "Backups" or "Gemaakt/School"), created on first use. */
+export async function ensureRootSubfolder(path: string) {
   const drive = await getDrive();
-  const key = `drive_subfolder:${name}`;
+  const key = `drive_subfolder:${path}`;
   const cached = await getSetting<string>(key);
   if (cached && (await folderExists(drive, cached))) return cached;
-  const id = await createFolder(drive, name, await ensureRootFolder(drive));
+  const slash = path.lastIndexOf("/");
+  const parent = slash === -1 ? await ensureRootFolder(drive) : await ensureRootSubfolder(path.slice(0, slash));
+  const id = await createFolder(drive, path.slice(slash + 1), parent);
   await setSetting(key, id);
   return id;
 }
@@ -171,11 +173,15 @@ export async function trashDriveFile(fileId: string) {
   await drive.files.update({ fileId, requestBody: { trashed: true } });
 }
 
-/** Creates a Google Doc from plain text (used by agents to write notes). */
+/**
+ * Creates a Google Doc from text. With markdown, Drive converts headings,
+ * lists and tables into real Docs formatting.
+ */
 export async function createGoogleDoc(opts: {
   name: string;
   text: string;
   folderId: string;
+  markdown?: boolean;
 }): Promise<DriveFile> {
   const drive = await getDrive();
   const res = await drive.files.create({
@@ -184,7 +190,7 @@ export async function createGoogleDoc(opts: {
       mimeType: "application/vnd.google-apps.document",
       parents: [opts.folderId],
     },
-    media: { mimeType: "text/plain", body: Readable.from(Buffer.from(opts.text, "utf8")) },
+    media: { mimeType: opts.markdown ? "text/markdown" : "text/plain", body: Readable.from(Buffer.from(opts.text, "utf8")) },
     fields: FILE_FIELDS,
   });
   return toDriveFile(res.data);
