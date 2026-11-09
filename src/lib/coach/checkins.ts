@@ -35,12 +35,21 @@ const techFactInstruction = (recent: string[]) =>
     recent.length ? ` Pick a different topic than these recent ones:\n${recent.map((f) => `- ${f}`).join("\n")}` : ""
   }`;
 
-/** Keeps the fact from today's message, so tomorrow's is about something else. */
-async function rememberTechFact(text: string) {
-  const fact = text.split("\n").find((l) => l.startsWith(TECH_FACT_LABEL));
-  if (!fact) return;
-  const recent = (await getSetting<string[]>(TECH_FACTS_KEY)) ?? [];
-  await setSetting(TECH_FACTS_KEY, [fact.slice(TECH_FACT_LABEL.length).trim().slice(0, 160), ...recent].slice(0, TECH_FACTS_KEPT));
+// Recent growth tips (project ideas and learning points), same idea as the tech facts.
+const GROWTH_KEY = "coach_growth_tips";
+const GROWTH_LABEL = "💡 Vandaag:";
+
+const growthInstruction = (recent: string[]) =>
+  `Then add an empty line and one line starting with "${GROWTH_LABEL}": on even days of the month a concrete project idea Piet could build and sell or use himself (something small businesses or developers actually pay for, fitting an AI developer who builds with LLM APIs, Next.js and Postgres; say who would pay for it), on odd days a learning point that makes him a more valuable developer (a skill, pattern or tool, with one concrete way to practise it). At most 2 sentences, no time estimates.${
+    recent.length ? ` Pick something different from these recent ones:\n${recent.map((f) => `- ${f}`).join("\n")}` : ""
+  }`;
+
+/** Keeps today's line (tech fact or growth tip), so tomorrow's is about something else. */
+async function rememberLine(text: string, label: string, key: string) {
+  const line = text.split("\n").find((l) => l.startsWith(label));
+  if (!line) return;
+  const recent = (await getSetting<string[]>(key)) ?? [];
+  await setSetting(key, [line.slice(label.length).trim().slice(0, 160), ...recent].slice(0, TECH_FACTS_KEPT));
 }
 
 // The morning check-in mentions GitLab milestones and issues due within this many days.
@@ -110,13 +119,14 @@ export function suggestionPayload(text: string, item: PlanItem, p: GoalProgress 
 export async function morningCheckin() {
   const today = dayKey();
   const sunday = addDays(weekStart(today), 6);
-  const [events, tasks, progress, suggested, prefs, recentFacts, projectDue, school] = await Promise.all([
+  const [events, tasks, progress, suggested, prefs, recentFacts, recentTips, projectDue, school] = await Promise.all([
     listEvents(zonedDate(today), zonedDate(addDays(today, 1))),
     listTasks().catch(() => null),
     weekProgress(today),
     goalsSuggestedToday(),
     getCoachPrefs(),
     getSetting<string[]>(TECH_FACTS_KEY),
+    getSetting<string[]>(GROWTH_KEY),
     projectDeadlines(addDays(today, COACH_PROJECT_DAYS)),
     schoolPicture().catch(() => null),
   ]);
@@ -151,11 +161,13 @@ export async function morningCheckin() {
   const fallback = `☀️ Goedemorgen!\n${facts}`;
   const text = await coachText(
     "Write the morning check-in: greet briefly, give the shape of his day in one or two sentences, mention what must not be forgotten, if there is a school focus name it in one sentence with its reason (and that he can see more with /school), and if there is a suggestion, propose it with the exact time. Max 6 sentences." +
+      (prefs.growthTip ? `\n${growthInstruction(recentTips ?? [])}` : "") +
       (prefs.techFact ? `\n${techFactInstruction(recentFacts ?? [])}` : ""),
-    facts,
+    `${facts}\nDay of the month: ${Number(today.slice(8))}`,
     fallback
   );
-  if (prefs.techFact) await rememberTechFact(text).catch((err) => console.error("[coach] saving the tech fact failed", err));
+  if (prefs.growthTip) await rememberLine(text, GROWTH_LABEL, GROWTH_KEY).catch((err) => console.error("[coach] saving the growth tip failed", err));
+  if (prefs.techFact) await rememberLine(text, TECH_FACT_LABEL, TECH_FACTS_KEY).catch((err) => console.error("[coach] saving the tech fact failed", err));
 
   const display = `☀️ ${text.replace(/^☀️\s*/, "")}`;
   await sendPrompt({

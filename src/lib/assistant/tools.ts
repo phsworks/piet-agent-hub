@@ -242,7 +242,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "coach_settings",
     description:
-      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders, no Portflow screenshot reminders, days that must stay free of planning ('woensdag is Compagnon').",
+      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, a daily project idea or learning point (growth_tip), no GitLab project nudges, no school/Portflow reminders, no Portflow screenshot reminders, days that must stay free of planning ('woensdag is Compagnon').",
     input_schema: {
       type: "object",
       properties: {
@@ -251,6 +251,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         deadline_nudges: { type: "boolean" },
         focus_suggestion: { type: "boolean" },
         tech_fact: { type: "boolean" },
+        growth_tip: { type: "boolean", description: "Daily project idea or learning point (earning money, growing as a developer) in the morning check-in." },
         project_nudges: { type: "boolean", description: "'No commits on Kova in 3 days and a milestone is coming, plan a block?'" },
         school_nudges: { type: "boolean", description: "School focus in the check-ins and 'done but not in Portflow yet' reminders." },
         portflow_reminders: { type: "boolean", description: "'Sprint ends soon, send a Portflow screenshot' reminders and Portflow in the weekly review." },
@@ -569,6 +570,7 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       if (typeof input.deadline_nudges === "boolean") changes.deadlineNudges = input.deadline_nudges;
       if (typeof input.focus_suggestion === "boolean") changes.focusSuggestion = input.focus_suggestion;
       if (typeof input.tech_fact === "boolean") changes.techFact = input.tech_fact;
+      if (typeof input.growth_tip === "boolean") changes.growthTip = input.growth_tip;
       if (typeof input.project_nudges === "boolean") changes.projectNudges = input.project_nudges;
       if (typeof input.school_nudges === "boolean") changes.schoolNudges = input.school_nudges;
       if (typeof input.portflow_reminders === "boolean") changes.portflowReminders = input.portflow_reminders;

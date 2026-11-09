@@ -15,6 +15,8 @@ export type CoachPrefs = {
   focusSuggestion: boolean;
   /** A short tech fact in the morning check-in. */
   techFact: boolean;
+  /** A project idea or learning point (earning money, growing as a developer) in the morning check-in. */
+  growthTip: boolean;
   /** "No commits on Kova in 3 days and a milestone is coming, plan a block?" */
   projectNudges: boolean;
   /** "Retrospective is done but not in Portflow yet" and school focus in the check-ins. */
@@ -32,6 +34,7 @@ export const DEFAULT_PREFS: CoachPrefs = {
   deadlineNudges: true,
   focusSuggestion: true,
   techFact: true,
+  growthTip: true,
   projectNudges: true,
   schoolNudges: true,
   portflowReminders: true,
