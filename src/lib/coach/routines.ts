@@ -1,5 +1,6 @@
 import { listEvents } from "@/lib/calendar/feeds";
 import { dayKey, isoWeekday, timeKey, weekStart, zonedDate } from "@/lib/dates";
+import { isNoPlanDay } from "./slots";
 import { weekProgress, type GoalProgress } from "./goals";
 import { keyExists, sendPrompt } from "./prompts";
 import type { InlineButton } from "@/lib/telegram/api";
@@ -76,6 +77,7 @@ export async function routineReminders() {
     if (await keyExists(tipKey)) continue;
     const behind = p.done < goal.timesPerWeek;
     if (!(behind ? weekday >= 3 : weekday === 7)) continue;
+    if (await isNoPlanDay(today)) continue;
     if (!(await freeEvening(today))) continue;
     const text = behind
       ? `📖 Je hebt vanavond niks meer staan. Zin om nog even te ${verb(goal.title)}? Dan zit je op ${p.done + 1} van ${goal.timesPerWeek}.`

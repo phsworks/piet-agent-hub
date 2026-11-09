@@ -1,5 +1,5 @@
 import type Anthropic from "@anthropic-ai/sdk";
-import { eq } from "drizzle-orm";
+import { desc, eq, ne } from "drizzle-orm";
 import { db } from "@/lib/db/client";
 import { agents, fileChunks, files } from "@/lib/db/schema";
 import { searchMemories, saveMemory } from "@/lib/memory/store";
@@ -22,7 +22,7 @@ import { allProgress, findProject, progressDetail, progressSummary, projectDeadl
 import { GitLabNotConfiguredError } from "@/lib/gitlab/client";
 import { findSchoolItem, isStatus, updateSchoolItem } from "@/lib/school/roadmap";
 import { lastImport, portflowReport, reportText } from "@/lib/school/portflow";
-import { focusLine, itemForAssistant, schoolPicture, themeLine } from "@/lib/school/priorities";
+import { focusLine, goalsLine, itemForAssistant, schoolPicture, themeLine } from "@/lib/school/priorities";
 import { createDocument, DOCUMENT_FOLDERS, isDocumentFolder } from "@/lib/documents/create";
 
 // Caps keep a single question cheap: a whole document is ~5k tokens at most.
@@ -242,7 +242,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
   {
     name: "coach_settings",
     description:
-      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders, no Portflow screenshot reminders.",
+      "Read or change how the coach behaves. Call without arguments to read. Use when Piet's feedback is about these: pause everything, fewer/no suggestions per day, no deadline nudges, no daily 'what do you want to work on' focus suggestion, no morning tech fact, no GitLab project nudges, no school/Portflow reminders, no Portflow screenshot reminders, days that must stay free of planning ('woensdag is Compagnon').",
     input_schema: {
       type: "object",
       properties: {
@@ -254,6 +254,7 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
         project_nudges: { type: "boolean", description: "'No commits on Kova in 3 days and a milestone is coming, plan a block?'" },
         school_nudges: { type: "boolean", description: "School focus in the check-ins and 'done but not in Portflow yet' reminders." },
         portflow_reminders: { type: "boolean", description: "'Sprint ends soon, send a Portflow screenshot' reminders and Portflow in the weekly review." },
+        no_plan_days: { type: "array", items: { type: "number" }, description: "ISO weekdays (1 = maandag … 7 = zondag) on which the coach never plans or suggests anything. Replaces the list; default [3] (woensdag, Compagnon)." },
       },
     },
   },
@@ -270,6 +271,12 @@ export const ASSISTANT_TOOLS: Anthropic.Tool[] = [
       },
       required: ["text"],
     },
+  },
+  {
+    name: "recent_files",
+    description:
+      "The files Piet sent or uploaded most recently and what happened to each (queued, processing, ready with its folder and link, or failed with the reason). Use when he asks whether his files arrived, what was processed, or says to stop processing: tell him exactly which files are done, still waiting or failed. Processing can't be cancelled.",
+    input_schema: { type: "object", properties: { limit: { type: "number", description: "Default 10, max 30." } } },
   },
   {
     name: "create_document",
@@ -323,6 +330,7 @@ export const TOOL_LABELS: Record<string, string> = {
   update_school_item: "Voortgang bijwerken…",
   portflow_check: "Portflow nakijken…",
   create_document: "Document schrijven…",
+  recent_files: "Bestanden nakijken…",
 };
 
 export async function executeTool(name: string, input: Record<string, unknown>, source: string) {
@@ -491,6 +499,9 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       }
       return {
         themes: picture.themes.map(themeLine),
+        evidence_per_goal: goalsLine(picture),
+        sprint: picture.sprint,
+        team_issues_to_help_with: picture.help.map((i) => `${i.title} (${i.project})${i.url ? ` ${i.url}` : ""}`),
         focus: picture.focus.map(focusLine),
         done_not_in_portflow: picture.portflow.map((i) => i.title),
         items: picture.tracked.map((i) => `${i.title} (${i.kind === "product" ? "product" : "side quest"}, ${i.theme ?? "-"}): ${i.status}`),
@@ -561,6 +572,7 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
       if (typeof input.project_nudges === "boolean") changes.projectNudges = input.project_nudges;
       if (typeof input.school_nudges === "boolean") changes.schoolNudges = input.school_nudges;
       if (typeof input.portflow_reminders === "boolean") changes.portflowReminders = input.portflow_reminders;
+      if (Array.isArray(input.no_plan_days)) changes.noPlanDays = [...new Set(input.no_plan_days.map(Number).filter((d) => d >= 1 && d <= 7))];
       const prefs = Object.keys(changes).length ? await setCoachPrefs(changes) : await getCoachPrefs();
       return { paused: await isCoachPaused(), ...prefs };
     }
@@ -574,6 +586,27 @@ async function runTool(name: string, input: Record<string, unknown>, source: str
         source,
       });
       return { saved: true, status: row.status };
+    }
+    case "recent_files": {
+      const limit = Math.min(Math.max(Number(input.limit) || 10, 1), 30);
+      const rows = await db
+        .select({ name: files.name, status: files.status, error: files.error, source: files.source, folder: agents.name, link: files.driveUrl, at: files.createdAt })
+        .from(files)
+        .leftJoin(agents, eq(agents.id, files.agentId))
+        .where(ne(files.kind, "code"))
+        .orderBy(desc(files.createdAt))
+        .limit(limit);
+      return {
+        files: rows.map((r) => ({
+          name: r.name,
+          received: `${dayKey(r.at)} ${timeKey(r.at)}`,
+          via: r.source,
+          status: r.status,
+          folder: r.folder,
+          link: r.link,
+          error: r.error,
+        })),
+      };
     }
     case "create_document": {
       const folder = isDocumentFolder(input.folder) ? input.folder : "Overig";

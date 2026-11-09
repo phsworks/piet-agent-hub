@@ -97,6 +97,7 @@ Give the list of what is missing in his Portflow at this moment, in three groups
 "🔴 Nu" (overdue, or for a sprint that ended or a review/assessment within a few days),
 "🟡 Deze sprint" (should be in before the current sprint ends),
 "⚪ Later".
+Nothing has to be finished mid-semester: during the sprints Piet shows progress per learning goal with interim evidence, so suggest things he already did that show a goal, not items to complete. Portflow is for his personal progress (reflections, feedback he got, his own contribution with a link); technical team work stays in the group's GitLab and is linked as evidence. Always include the technical evidence that should be there at minimum (from his finished GitLab work: merged MRs, architecture, database, tests, deployment), linked to OR. No time estimates or hours.
 Each item: what to add (name the concrete document, finished GitLab work or roadmap item), to which goal (OR/PL/AA/MS) it should be linked (the goals given with the item when there are any), and why now (date, sprint, deadline). Only mention sprints and dates that are in the facts; without a running sprint, skip "Deze sprint" and sort by deadline and what's started. Don't list things that are already there. Things marked klaar in the roadmap but not seen in Portflow go first. At most 10 items. If the screenshots are older than a week, end with one line saying the list is based on the screenshot of that date. Use only the facts given.`,
     messages: [{ role: "user", content: facts }],
   });

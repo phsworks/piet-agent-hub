@@ -21,6 +21,8 @@ export type CoachPrefs = {
   schoolNudges: boolean;
   /** "Sprint 2 ends Friday, send a Portflow screenshot" and the Portflow line in the weekly review. */
   portflowReminders: boolean;
+  /** ISO weekdays (1 = ma … 7 = zo) the coach never plans or suggests anything on, e.g. a work day with long travel. */
+  noPlanDays: number[];
 };
 
 const KEY = "coach_prefs";
@@ -33,6 +35,8 @@ export const DEFAULT_PREFS: CoachPrefs = {
   projectNudges: true,
   schoolNudges: true,
   portflowReminders: true,
+  // Wednesday is Compagnon (work plus 1.5 h travel).
+  noPlanDays: [3],
 };
 
 export async function getCoachPrefs(): Promise<CoachPrefs> {

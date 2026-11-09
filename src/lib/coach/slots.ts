@@ -1,7 +1,13 @@
 import { listEvents } from "@/lib/calendar/feeds";
-import { addDays, dayKey, timeKey, zonedDate } from "@/lib/dates";
+import { addDays, dayKey, isoWeekday, timeKey, zonedDate } from "@/lib/dates";
 import { COACH, DAY_PARTS, TIMEZONE } from "@/lib/config";
 import type { DayPart } from "./goals";
+import { getCoachPrefs } from "./prefs";
+
+/** Days Piet keeps free of planning (coach pref noPlanDays). */
+export async function isNoPlanDay(day: string) {
+  return (await getCoachPrefs()).noPlanDays.includes(isoWeekday(day));
+}
 
 export type Slot = { start: string; end: string };
 
@@ -12,7 +18,8 @@ const STEP_MS = 30 * 60_000;
  * Free time in Piet's calendar, found in code (no AI): per day, the window of
  * the preferred day part minus his events (with a margin around them). At most
  * one slot per day, the earliest that fits, so suggestions spread over the week.
- * All-day events (reminders, holidays) don't block time.
+ * All-day events (reminders, holidays) don't block time. Days in the coach
+ * pref noPlanDays (Wednesday: Compagnon) are skipped.
  */
 export async function findSlots(opts: {
   fromDay: string;
@@ -26,6 +33,7 @@ export async function findSlots(opts: {
   limit?: number;
 }): Promise<Slot[]> {
   const lastDay = addDays(opts.fromDay, opts.days - 1);
+  const { noPlanDays } = await getCoachPrefs();
   const events = await listEvents(zonedDate(opts.fromDay), zonedDate(addDays(lastDay, 1)));
   const margin = COACH.bufferMinutes * 60_000;
   const busy = events
@@ -39,7 +47,7 @@ export async function findSlots(opts: {
   const slots: Slot[] = [];
   for (let i = 0; i < opts.days && slots.length < (opts.limit ?? 7); i++) {
     const day = addDays(opts.fromDay, i);
-    if (opts.excludeDays?.includes(day)) continue;
+    if (opts.excludeDays?.includes(day) || noPlanDays.includes(isoWeekday(day))) continue;
     const from = zonedDate(day, window.from).getTime();
     const until = zonedDate(day, window.until).getTime();
 
@@ -69,6 +77,7 @@ export async function findSlots(opts: {
  * half-hour grid, margin around events, all-day events don't count.
  */
 export async function freeBlocks(opts: { day: string; from: string; until: string; minMinutes: number }): Promise<Slot[]> {
+  if (await isNoPlanDay(opts.day)) return [];
   const events = await listEvents(zonedDate(opts.day), zonedDate(addDays(opts.day, 1)));
   const margin = COACH.bufferMinutes * 60_000;
   const busy = events
