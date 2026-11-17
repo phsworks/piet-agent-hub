@@ -31,11 +31,13 @@ type ReadRow = {
   goals: string[];
   subgoals: string[];
   feedback_status: string | null;
+  /** False for "2 maanden geleden" on a collection page: the date is an estimate. */
+  date_exact?: boolean;
 };
 
 const READ_TOOL: Anthropic.Tool = {
   name: "record_evidence",
-  description: "Record every row of the Portflow evidence table visible in the screenshot.",
+  description: "Record every piece of evidence visible in the screenshot (a 'Mijn bewijs' table or a collection page).",
   input_schema: {
     type: "object",
     properties: {
@@ -46,13 +48,14 @@ const READ_TOOL: Anthropic.Tool = {
           properties: {
             type: { type: "string", enum: ["file", "link", "feedback", "other"], description: "The icon in the Type column: green page = file, yellow chain = link, red/pink = feedback." },
             name: { type: "string", description: "The Naam column, exactly as shown (both lines joined with a space)." },
-            created_on: { type: "string", description: "Aanmaakdatum as YYYY-MM-DD (Dutch month names, e.g. '27 oktober 2026' → 2026-10-27)." },
+            created_on: { type: "string", description: "Aanmaakdatum as YYYY-MM-DD (Dutch month names, e.g. '27 oktober 2026' → 2026-10-27). For a relative date ('2 maanden geleden', '13 dagen geleden') estimate it from today's date." },
+            date_exact: { type: "boolean", description: "True for a full date, false when it was a relative date you estimated." },
             collections: { type: "array", items: { type: "string" }, description: "Gelinkte collecties, e.g. 'de Techneut'. Empty when it says 'Geen collecties'." },
             goals: { type: "array", items: { type: "string" }, description: "Gekoppelde doelen as shown, e.g. 'Ontwerpen & Realiseren'." },
             subgoals: { type: "array", items: { type: "string" }, description: "Gekoppelde subdoelen as shown, e.g. 'MS4: Teamcoördinatie'." },
             feedback_status: { type: ["string", "null"], description: "Laatste feedbackstatus, null when empty." },
           },
-          required: ["type", "name", "created_on", "collections", "goals", "subgoals", "feedback_status"],
+          required: ["type", "name", "created_on", "date_exact", "collections", "goals", "subgoals", "feedback_status"],
         },
       },
     },
@@ -74,7 +77,7 @@ export async function readScreenshot(buffer: Buffer, mediaType: "image/png" | "i
           { type: "image", source: { type: "base64", media_type: mediaType, data: buffer.toString("base64") } },
           {
             type: "text",
-            text: "This is a screenshot of the 'Mijn bewijs' page in Portflow (a student portfolio). Record every complete table row. Skip rows that are cut off. Copy names exactly; don't guess text you can't read. If this is not that page, record no rows.",
+            text: `Today is ${dayKey()}. This is a screenshot from Portflow (a student portfolio): either the 'Mijn bewijs' table, or a collection page (a header like 'de Techneut', then dark section bars per goal such as 'Ontwerpen & Realiseren' with evidence rows under them). On a collection page: collections = [that collection's name], goals = [the section bar the row is under] ([] for rows above the first bar), subgoals = the grey chips (e.g. 'OR1: Client-Server'), type from the round icon (yellow chain = link, green page = file, pink/red = feedback). Record every complete row; skip rows that are cut off. Copy names exactly; don't guess text you can't read. If it's neither page, record no rows.`,
           },
         ],
       },
@@ -118,7 +121,8 @@ function roadmapMatch(name: string, tracked: Awaited<ReturnType<typeof listTrack
  */
 export async function importEvidence(rows: ReadRow[]) {
   const tracked = await listTracked();
-  let added = 0;
+  const count = async () => (await db.select({ n: sql<number>`count(*)::int` }).from(portflowEvidence))[0].n;
+  const before = await count();
   const marked: string[] = [];
   const seen = new Map<string, number>();
   for (const r of rows) {
@@ -126,26 +130,46 @@ export async function importEvidence(rows: ReadRow[]) {
     const name = r.name.trim();
     const copy = seen.get(`${name}|${r.created_on}`) ?? 0;
     seen.set(`${name}|${r.created_on}`, copy + 1);
-    const values = {
-      name,
-      type: r.type || "file",
-      createdOn: r.created_on,
-      copy,
-      collections: r.collections.map(collection).filter(Boolean),
-      goals: [...new Set(r.goals.map(goalCode).filter(Boolean))],
-      subgoals: r.subgoals.map((s) => s.trim()).filter(Boolean),
-      feedbackStatus: r.feedback_status?.trim() || null,
-      roadmapItemId: item?.id ?? null,
-    };
-    const [row] = await db
-      .insert(portflowEvidence)
-      .values(values)
-      .onConflictDoUpdate({
-        target: [portflowEvidence.name, portflowEvidence.createdOn, portflowEvidence.copy],
-        set: { ...values, roadmapItemId: sql`coalesce(excluded.roadmap_item_id, ${portflowEvidence.roadmapItemId})`, lastSeenAt: new Date() },
-      })
-      .returning({ inserted: sql<boolean>`(xmax = 0)` });
-    if (row?.inserted) added++;
+    const same = await db.select().from(portflowEvidence).where(eq(portflowEvidence.name, name));
+    const sameDay = same.some((e) => e.createdOn === r.created_on);
+    // A relative date ("2 maanden geleden") or a date that differs from an earlier
+    // estimate: it's the same piece of evidence, so merge instead of adding a copy.
+    const near = (e: Evidence) => Math.abs(new Date(e.createdOn).getTime() - new Date(r.created_on).getTime()) < 45 * 86_400_000;
+    const merge = !sameDay ? (r.date_exact === false ? same[0] : same.length === 1 && near(same[0]) ? same[0] : undefined) : undefined;
+    if (merge) {
+      const union = (a: string[], b: string[]) => [...new Set([...a, ...b])];
+      await db
+        .update(portflowEvidence)
+        .set({
+          collections: union(merge.collections, r.collections.map(collection).filter(Boolean)),
+          goals: union(merge.goals, r.goals.map(goalCode).filter(Boolean)),
+          subgoals: union(merge.subgoals, r.subgoals.map((s) => s.trim()).filter(Boolean)),
+          ...(r.date_exact === false ? {} : { createdOn: r.created_on }),
+          feedbackStatus: r.feedback_status?.trim() || merge.feedbackStatus,
+          roadmapItemId: item?.id ?? merge.roadmapItemId,
+          lastSeenAt: new Date(),
+        })
+        .where(eq(portflowEvidence.id, merge.id));
+    } else {
+      const values = {
+        name,
+        type: r.type || "file",
+        createdOn: r.created_on,
+        copy,
+        collections: r.collections.map(collection).filter(Boolean),
+        goals: [...new Set(r.goals.map(goalCode).filter(Boolean))],
+        subgoals: r.subgoals.map((s) => s.trim()).filter(Boolean),
+        feedbackStatus: r.feedback_status?.trim() || null,
+        roadmapItemId: item?.id ?? null,
+      };
+      await db
+        .insert(portflowEvidence)
+        .values(values)
+        .onConflictDoUpdate({
+          target: [portflowEvidence.name, portflowEvidence.createdOn, portflowEvidence.copy],
+          set: { ...values, roadmapItemId: sql`coalesce(excluded.roadmap_item_id, ${portflowEvidence.roadmapItemId})`, lastSeenAt: new Date() },
+        });
+    }
     if (item && item.status !== "in_portflow") {
       await updateSchoolItem(item.id, { status: "in_portflow" });
       item.status = "in_portflow";
@@ -153,7 +177,7 @@ export async function importEvidence(rows: ReadRow[]) {
     }
   }
   await setSetting(LAST_IMPORT_KEY, new Date().toISOString());
-  return { read: rows.length, added, marked };
+  return { read: rows.length, added: (await count()) - before, marked };
 }
 
 export async function lastImport() {
@@ -192,13 +216,13 @@ export type PortflowReport = {
   waiting: string[];
 };
 
-const has = (e: Evidence, phrases: readonly string[]) => phrases.some((p) => words(e.name).includes(words(p)));
+export const has = (e: Evidence, phrases: readonly string[]) => phrases.some((p) => words(e.name).includes(words(p)));
 // Feedback shows up three ways: a feedback status, a feedback piece of its own
 // (red icon, e.g. a coaching review), or a teacher's assessment uploaded as a file.
 const FEEDBACK_WORDS = ["feedback", "beoordeling", "coaching", "technische review", "tech review"];
 const hasFeedback = (e: Evidence) => Boolean(e.feedbackStatus) || e.type === "feedback" || has(e, FEEDBACK_WORDS);
 
-function sprintOf(e: Evidence, sprints: Sprint[]) {
+export function sprintOf(e: Evidence, sprints: Sprint[]) {
   const named = sprintInName(e.name);
   return named !== null ? (sprints.find((s) => s.number === named) ?? null) : sprintOn(sprints, e.createdOn);
 }

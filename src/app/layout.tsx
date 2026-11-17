@@ -6,10 +6,12 @@ import { Toaster } from "@/components/ui/sonner";
 import { UploadProvider } from "@/components/uploads/upload-provider";
 
 const NAV = [
-  { href: "/", label: "Home" },
-  { href: "/files", label: "Files" },
-  { href: "/memories", label: "Memories" },
-  { href: "/settings", label: "Settings" },
+  { href: "/", label: "School" },
+  { href: "/project", label: "Project" },
+  { href: "/planning", label: "Planning" },
+  { href: "/bibliotheek", label: "Bibliotheek" },
+  { href: "/assistent", label: "Assistent" },
+  { href: "/settings", label: "Instellingen" },
 ];
 
 const geistSans = Geist({
@@ -23,17 +25,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Piet's Brain",
-  description: "Personal automation hub",
+  title: "piet-hva",
+  description: "Piets HvA-schoolhub",
   // "Add to Home Screen" on iOS then opens it full-screen, like an app.
-  appleWebApp: { capable: true, title: "Piet's Brain" },
+  appleWebApp: { capable: true, title: "piet-hva" },
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`dark ${geistSans.variable} ${geistMono.variable} h-dvh antialiased`}
+      className={`${geistSans.variable} ${geistMono.variable} h-dvh antialiased`}
       suppressHydrationWarning
     >
       <body
@@ -43,7 +45,7 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
         <UploadProvider>
           <header className="border-b border-border px-4 md:px-6 py-3 flex items-center gap-4 md:gap-6 overflow-x-auto">
             <Link href="/" className="font-semibold tracking-tight text-primary shrink-0">
-              Piet&apos;s Brain
+              piet-hva
             </Link>
             <nav className="flex gap-4 text-sm text-muted-foreground">
               {NAV.map((item) => (

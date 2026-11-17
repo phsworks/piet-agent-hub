@@ -41,6 +41,10 @@ export async function gitlabGet<T>(path: string, query?: Query): Promise<T> {
   return (await (await request(path, query)).json()) as T;
 }
 
+export async function gitlabText(path: string, query?: Query): Promise<string> {
+  return (await request(path, query)).text();
+}
+
 /** Follows GitLab's x-next-page header until the list ends (or MAX_PAGES). */
 export async function gitlabList<T>(path: string, query: Query = {}): Promise<T[]> {
   const all: T[] = [];

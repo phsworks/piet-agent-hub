@@ -16,7 +16,7 @@ const FILTERS = [
   { key: "failed", label: "Failed" },
 ] as const;
 
-export default function FilesPage() {
+export function FilesSection() {
   const [files, setFiles] = useState<FileItem[] | null>(null);
   const [filter, setFilter] = useState<(typeof FILTERS)[number]["key"]>("all");
   const [query, setQuery] = useState("");
@@ -55,9 +55,9 @@ export default function FilesPage() {
   });
 
   return (
-    <div className="max-w-3xl w-full mx-auto px-4 py-8 flex flex-col gap-4">
+    <section className="flex flex-col gap-4">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h1 className="text-lg font-semibold">Files</h1>
+        <h2 className="text-lg font-semibold">Bestanden</h2>
         <div className="flex gap-2">
           <input
             ref={fileInputRef}
@@ -131,6 +131,6 @@ export default function FilesPage() {
           <FileRow key={f.id} file={f} showAgent onChanged={load} />
         ))}
       </ul>
-    </div>
+    </section>
   );
 }

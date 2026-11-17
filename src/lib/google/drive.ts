@@ -196,6 +196,13 @@ export async function createGoogleDoc(opts: {
   return toDriveFile(res.data);
 }
 
+/** A Google Doc exported to another format, e.g. .docx. */
+export async function exportGoogleDoc(fileId: string, mimeType: string): Promise<Buffer> {
+  const drive = await getDrive();
+  const res = await drive.files.export({ fileId, mimeType }, { responseType: "arraybuffer" });
+  return Buffer.from(res.data as ArrayBuffer);
+}
+
 /** Full-text search across all of Piet's Drive. */
 export async function searchDrive(query: string, limit = 10): Promise<DriveFile[]> {
   const drive = await getDrive();

@@ -7,7 +7,6 @@ import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { filesFromInput } from "@/components/uploads/drop-files";
 import { useUploads } from "@/components/uploads/upload-provider";
-import { REMINDERS_CHANGED_EVENT } from "@/components/home/shared";
 
 type ChatMessage = {
   role: "user" | "assistant";
@@ -33,8 +32,6 @@ const TOOL_LABELS: Record<string, string> = {
   save_note: "Opslaan…",
 };
 
-// Tools after which the agenda and task cards reload.
-const REFRESHING_TOOLS = new Set(["create_reminder", "complete_task", "create_event", "move_event", "delete_event"]);
 
 /** Chat with the assistant. Same brain as the Telegram bot, separate conversation. */
 export function AssistantChat() {
@@ -61,7 +58,6 @@ export function AssistantChat() {
     setMessages((prev) => [...prev, { role: "user", content: message, deep }, { role: "assistant", content: "" }]);
     setBusy(true);
 
-    let touchedReminders = false;
     try {
       const res = await fetch("/api/chat", {
         method: "POST",
@@ -84,7 +80,6 @@ export function AssistantChat() {
           if (!line.trim()) continue;
           const event = JSON.parse(line) as ChatEvent;
           if (event.type === "tool") {
-            if (REFRESHING_TOOLS.has(event.name)) touchedReminders = true;
             updateLast((last) => ({ ...last, tool: event.name }));
           } else if (event.type === "text") {
             updateLast((last) => ({ ...last, tool: undefined, content: event.text }));
@@ -93,7 +88,6 @@ export function AssistantChat() {
           }
         }
       }
-      if (touchedReminders) window.dispatchEvent(new Event(REMINDERS_CHANGED_EVENT));
     } catch (err) {
       console.error(err);
       updateLast((last) => ({ ...last, tool: undefined, content: last.content || "[Er ging iets mis. Draait de app?]" }));

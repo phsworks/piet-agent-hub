@@ -21,7 +21,7 @@ type Memory = {
   updatedAt: string;
 };
 
-export default function MemoriesPage() {
+export function NotesSection() {
   const [memories, setMemories] = useState<Memory[]>([]);
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -80,8 +80,8 @@ export default function MemoriesPage() {
   }
 
   return (
-    <div className="max-w-2xl w-full mx-auto px-4 py-8 flex flex-col gap-4">
-      <h1 className="text-lg font-semibold">Memories</h1>
+    <section className="flex flex-col gap-4">
+      <h2 className="text-lg font-semibold">Notities</h2>
       {loading && (
         <p className="text-sm text-muted-foreground">Loading…</p>
       )}
@@ -145,6 +145,6 @@ export default function MemoriesPage() {
           </CardFooter>
         </Card>
       ))}
-    </div>
+    </section>
   );
 }

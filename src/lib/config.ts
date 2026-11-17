@@ -68,6 +68,11 @@ export const COACH = {
 // School roadmap (static site with a roadmap.json); SCHOOL_ROADMAP_URL overrides it.
 export const SCHOOL = {
   roadmapUrl: process.env.SCHOOL_ROADMAP_URL ?? "https://roadmap-propedeuse-semester-2-a3868e.dev.hihva.nl/",
+  // HvA Onderwijsplanning and Piet's module in it (In-Action, 2026-2027 semester 1).
+  planningUrl: process.env.SCHOOL_PLANNING_URL ?? "https://sprintplanning.ict-hva.nl/",
+  planningModule: process.env.SCHOOL_PLANNING_MODULE ?? "propedeuse-in-action-s1-2627",
+  // The team's docs site (MkDocs on GitLab Pages) shown on the Project tab.
+  docsUrl: process.env.SCHOOL_DOCS_URL ?? "https://start-up-impact-ai-kova-df7ee2.dev.hihva.nl/",
   // Items suggested as "work on this" in /school and the morning check-in.
   focusItems: 3,
   // GitLab activity this recent moves an item from todo to bezig.
